@@ -1,0 +1,58 @@
+# researcher — AI 分析模块
+
+对候选词执行三步 AI 分析，生成结构化的 `MemeRecord` 并写入梗库。
+
+## 文件
+
+| 文件 | 职责 |
+|------|------|
+| `models.py`    | `MemeRecord`（词条完整模型）和 `QuickScreenResult`（快筛输出模型） |
+| `tools.py`     | 工具函数：B站搜索、Web 搜索（Serper）、URL 真实性验证 |
+| `agent.py`     | PydanticAI Agent 定义及三步主流程 |
+
+## 触发方式
+
+- **自动**：每周一 06:00 由 `scheduler.py` 调用 `run_research()`
+- **手动**：`python -m meme_detector research`
+
+## 三步分析流程
+
+```
+Step 1  批量快筛
+        输入：全部 pending 候选词（最多 AI_BATCH_SIZE=50 个/批）
+        模型：DeepSeek-V3（JSON 模式，低温度）
+        输出：QuickScreenResult { is_meme, confidence, reason }
+        分流：confidence < AI_CONFIDENCE_THRESHOLD(0.65) → 标记 rejected，跳过
+
+Step 2  深度分析（仅 Step1 通过的词）
+        模型：DeepSeek-V3 via PydanticAI Agent
+        工具调用：
+          bilibili_search(word)         → 相关视频标题 / BV 号
+          web_search("[word] 梗 来源")  → 外部背景
+        输出：完整 MemeRecord（含 definition、origin、source_urls 等）
+
+Step 3  来源验证
+        对 source_urls 列表发送 HTTP HEAD 请求
+        过滤 4xx/5xx 或超时的死链
+        有效来源数量不足时按比例下调 confidence_score
+        → 写入 Meilisearch
+```
+
+## 依赖配置
+
+| 环境变量 | 用途 | 必填 |
+|----------|------|------|
+| `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | ✅ |
+| `SERPER_API_KEY` | Google Search via Serper.dev | 可选（缺失则跳过 Web 搜索） |
+
+## 幻觉防护
+
+1. **置信度阈值**：低于 0.65 直接拒绝，不进入深度分析
+2. **URL 验证**：HTTP HEAD 检查来源真实性，过滤 AI 编造的链接
+3. **人工兜底**：所有入库记录 `human_verified=false`，可通过 API 端点复核
+4. **重试机制**：`tenacity` 指数退避重试（最多 3 次），防止 API 偶发失败
+
+## 扩展：接入其他 LLM
+
+`_get_deepseek_model()` 返回 `OpenAIModel`（OpenAI 兼容接口）。
+只需修改 `DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL` 即可切换到其他兼容服务（如 OpenAI、Moonshot）。

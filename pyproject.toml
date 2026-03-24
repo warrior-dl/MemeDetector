@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "meme-detector"
+version = "0.1.0"
+description = "Automatically discover and analyze trending internet memes from Bilibili"
+requires-python = ">=3.12"
+dependencies = [
+    # 采集
+    "bilibili-api-python>=16.3.0",
+    "curl-cffi>=0.7.0",
+    # 分词
+    "jieba>=0.42.1",
+    # AI 框架
+    "pydantic-ai>=0.0.14",
+    "openai>=1.0.0",           # DeepSeek OpenAI 兼容接口
+    # 存储
+    "duckdb>=1.1.0",
+    "meilisearch>=0.31.0",
+    # API
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    # 调度
+    "apscheduler>=3.10.0",
+    # 工具
+    "httpx>=0.27.0",
+    "pydantic-settings>=2.5.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.0.0",             # 美观的日志输出
+    "tenacity>=9.0.0",          # 重试
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-httpx>=0.30.0",
+    "ruff>=0.7.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

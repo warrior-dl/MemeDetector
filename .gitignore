@@ -1,0 +1,11 @@
+data/duckdb/
+data/meili/
+logs/
+.env
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
