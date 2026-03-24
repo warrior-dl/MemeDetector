@@ -6,23 +6,47 @@
 
 ## 快速开始
 
+### 本地开发（推荐）
+
+基础设施跑在 Docker，app 在宿主机直接运行，方便断点调试。
+
 ```bash
-# 1. 复制配置文件，填入 B站 Cookie 和 DeepSeek API Key
+# 1. 复制配置，填入 B站 Cookie 和 DeepSeek API Key
 cp .env.example .env
+# 确认 .env 中 MEILI_URL=http://localhost:7700
 
-# 2. 启动 Meilisearch
-docker compose up meilisearch -d
+# 2. 安装依赖
+pip install -e ".[dev]"
 
-# 3. 手动触发一次采集（积累冷启动数据）
+# 3. 启动 Meilisearch
+docker compose up -d
+
+# 4. 手动触发一次采集（冷启动积累基线数据）
 python -m meme_detector scout
 
-# 4. 手动触发一次 AI 分析
+# 5. 手动触发一次 AI 分析
 python -m meme_detector research
 
-# 5. 启动 API 服务（含定时调度器）
+# 6. 启动 API 服务（含定时调度器）
 python -m meme_detector serve
 # 访问 http://localhost:8000/docs 查看接口文档
 ```
+
+### 生产部署（全容器化）
+
+```bash
+# .env 中将 MEILI_URL 改为 http://meilisearch:7700
+docker compose --profile prod up -d
+```
+
+### 两种模式的区别
+
+| | 本地开发 | 生产部署 |
+|---|---|---|
+| Meilisearch | Docker | Docker |
+| app | 宿主机直接运行 | Docker (`prod` profile) |
+| `MEILI_URL` | `http://localhost:7700` | `http://meilisearch:7700` |
+| 调试 | 支持断点 / 热重载 | 不支持 |
 
 ## 架构
 

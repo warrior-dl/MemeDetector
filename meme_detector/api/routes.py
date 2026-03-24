@@ -10,7 +10,6 @@ from meme_detector.archivist.duckdb_store import (
     get_conn,
     get_pending_candidates,
     update_candidate_status,
-    update_human_verified as _db_verify,
 )
 from meme_detector.archivist.meili_store import (
     get_meme,

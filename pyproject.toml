@@ -40,6 +40,9 @@ dev = [
     "ruff>=0.7.0",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = ["meme_detector"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
