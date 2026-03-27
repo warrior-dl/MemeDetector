@@ -30,6 +30,8 @@ python -m meme_detector research
 # 6. 启动 API 服务（含定时调度器）
 python -m meme_detector serve
 # 访问 http://localhost:8000/docs 查看接口文档
+# 访问 http://localhost:8000/admin 查看前端管理台
+# 访问 http://localhost:8000/admin/candidates 查看候选梗分页管理页
 ```
 
 ### 生产部署（全容器化）

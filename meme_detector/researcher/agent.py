@@ -178,23 +178,34 @@ async def _deep_analyze(
 
 # ── 主流程 ──────────────────────────────────────────────────
 
-async def run_research() -> None:
+async def run_research() -> dict:
     """完整的 AI 分析流程。"""
     console.print("\n[bold blue]═══ Researcher 开始运行 ═══[/bold blue]")
 
     conn = get_conn()
     candidates = get_pending_candidates(conn, limit=settings.ai_batch_size)
+    result = {
+        "pending_count": len(candidates),
+        "screened_count": 0,
+        "deep_analysis_count": 0,
+        "accepted_count": 0,
+        "rejected_count": 0,
+        "accepted_records": [],
+        "rejected_words": [],
+        "failed_words": [],
+    }
 
     if not candidates:
         console.print("[yellow]暂无待分析候选词[/yellow]")
         conn.close()
-        return
+        return result
 
     console.print(f"共 {len(candidates)} 个候选词待分析")
 
     # ── Step 1: 批量快速筛选 ─────────────────────────────────
     console.print("\n[bold]Step 1: 快速批量筛选...[/bold]")
     screen_results = await _batch_screen(candidates)
+    result["screened_count"] = len(screen_results)
 
     screen_map = {r.word: r for r in screen_results}
     to_deep = [
@@ -210,6 +221,9 @@ async def run_research() -> None:
     ]
     for word in rejected:
         update_candidate_status(conn, word, "rejected")
+    result["rejected_words"] = rejected
+    result["rejected_count"] = len(rejected)
+    result["deep_analysis_count"] = len(to_deep)
 
     console.print(
         f"  筛选结果：[green]{len(to_deep)} 个通过[/green]，"
@@ -218,7 +232,7 @@ async def run_research() -> None:
 
     if not to_deep:
         conn.close()
-        return
+        return result
 
     # ── Step 2 & 3: 深度分析 + URL 验证 ──────────────────────
     console.print("\n[bold]Step 2: 深度分析 + 溯源...[/bold]")
@@ -237,26 +251,39 @@ async def run_research() -> None:
             today=today,
         )
         if record is None:
+            result["failed_words"].append(word)
             continue
 
         # Step 3: URL 验证
         if record.source_urls:
+            original_source_count = len(record.source_urls)
             valid_urls = await verify_urls(record.source_urls)
             console.print(
-                f"     来源验证：{len(record.source_urls)} → {len(valid_urls)} 个有效"
+                f"     来源验证：{original_source_count} → {len(valid_urls)} 个有效"
             )
             record.source_urls = valid_urls
             # 有效来源少于预期时，适当降低置信度
-            if len(valid_urls) < len(record.source_urls) // 2:
+            if original_source_count > 0 and len(valid_urls) < original_source_count / 2:
                 record.confidence_score *= 0.8
 
         # 写入 Meilisearch
         await upsert_meme(record)
         update_candidate_status(conn, word, "accepted")
         success_count += 1
-        console.print(f"     [green]✓ 已入库[/green]")
+        result["accepted_records"].append(
+            {
+                "id": record.id,
+                "title": record.title,
+                "heat_index": record.heat_index,
+                "lifecycle_stage": record.lifecycle_stage,
+                "confidence_score": record.confidence_score,
+            }
+        )
+        console.print("     [green]✓ 已入库[/green]")
 
     conn.close()
+    result["accepted_count"] = success_count
     console.print(
         f"\n[bold green]Researcher 完成：{success_count} 个梗成功入库[/bold green]"
     )
+    return result

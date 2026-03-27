@@ -4,12 +4,14 @@ DuckDB 存储层：管理词频时序数据和候选词队列。
 
 from __future__ import annotations
 
-import duckdb
-from datetime import date
+import json
+from datetime import date, datetime
 from pathlib import Path
+from uuid import uuid4
+
+import duckdb
 
 from meme_detector.config import settings
-
 
 _CREATE_WORD_FREQ = """
 CREATE TABLE IF NOT EXISTS word_freq (
@@ -57,6 +59,22 @@ CREATE TABLE IF NOT EXISTS meme_records (
 );
 """
 
+_CREATE_PIPELINE_RUNS = """
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    id                TEXT PRIMARY KEY,
+    job_name          TEXT      NOT NULL,
+    trigger_mode      TEXT      NOT NULL DEFAULT 'manual',
+    status            TEXT      NOT NULL,
+    started_at        TIMESTAMP NOT NULL,
+    finished_at       TIMESTAMP,
+    duration_seconds  DOUBLE,
+    result_count      INTEGER   DEFAULT 0,
+    summary           TEXT      DEFAULT '',
+    error_message     TEXT      DEFAULT '',
+    payload_json      TEXT      DEFAULT '{}'
+);
+"""
+
 
 def get_conn() -> duckdb.DuckDBPyConnection:
     """返回持久化的 DuckDB 连接。"""
@@ -71,6 +89,7 @@ def _ensure_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(_CREATE_WORD_FREQ)
     conn.execute(_CREATE_CANDIDATES)
     conn.execute(_CREATE_MEME_RECORDS)
+    conn.execute(_CREATE_PIPELINE_RUNS)
     # 兼容旧库：补充新增列
     try:
         conn.execute(_MIGRATE_CANDIDATES_EXPLANATION)
@@ -236,6 +255,58 @@ def get_candidates(
     ]
 
 
+def get_candidates_page(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    status: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> dict:
+    """分页获取候选梗完整信息。"""
+    where_clause = ""
+    params: list[str | int] = []
+    if status:
+        where_clause = "WHERE status = ?"
+        params.append(status)
+
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM candidates {where_clause}",
+        params,
+    ).fetchone()[0]
+
+    page_params = [*params, limit, offset]
+    rows = conn.execute(
+        f"""
+        SELECT word, score, is_new_word, sample_comments, explanation, detected_at, status
+        FROM candidates
+        {where_clause}
+        ORDER BY detected_at DESC, score DESC, word ASC
+        LIMIT ?
+        OFFSET ?
+        """,
+        page_params,
+    ).fetchall()
+
+    items = [
+        {
+            "word": row[0],
+            "score": row[1],
+            "is_new_word": row[2],
+            "sample_comments": row[3],
+            "explanation": row[4],
+            "detected_at": row[5],
+            "status": row[6],
+        }
+        for row in rows
+    ]
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
 def get_pending_candidates(
     conn: duckdb.DuckDBPyConnection, limit: int = 100
 ) -> list[dict]:
@@ -285,6 +356,13 @@ def update_candidate_comments(
     )
 
 
+def delete_all_candidates(conn: duckdb.DuckDBPyConnection) -> int:
+    """删除全部候选梗。"""
+    deleted_count = conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0]
+    conn.execute("DELETE FROM candidates")
+    return deleted_count
+
+
 def upsert_scout_candidates(
     conn: duckdb.DuckDBPyConnection,
     candidates: list[dict],
@@ -292,7 +370,8 @@ def upsert_scout_candidates(
     """
     写入 Scout LLM 识别的梗候选（IGNORE 已存在的，保留人工审核状态）。
 
-    candidates: [{"phrase": str, "explanation": str, "examples": list[str], "confidence": float}, ...]
+    candidates: [{"phrase": str, "explanation": str, "examples": list[str],
+                 "confidence": float}, ...]
     """
     if not candidates:
         return
@@ -314,3 +393,160 @@ def upsert_scout_candidates(
         """,
         rows,
     )
+
+
+def create_pipeline_run(
+    conn: duckdb.DuckDBPyConnection,
+    job_name: str,
+    trigger_mode: str = "manual",
+) -> str:
+    """创建一条运行记录，初始状态为 running。"""
+    run_id = uuid4().hex
+    conn.execute(
+        """
+        INSERT INTO pipeline_runs (id, job_name, trigger_mode, status, started_at)
+        VALUES (?, ?, ?, 'running', ?)
+        """,
+        [run_id, job_name, trigger_mode, datetime.now()],
+    )
+    return run_id
+
+
+def finish_pipeline_run(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    status: str,
+    *,
+    result_count: int = 0,
+    summary: str = "",
+    error_message: str = "",
+    payload: dict | None = None,
+) -> None:
+    """更新运行记录结束状态与结果摘要。"""
+    started_at_row = conn.execute(
+        "SELECT started_at FROM pipeline_runs WHERE id = ?",
+        [run_id],
+    ).fetchone()
+    finished_at = datetime.now()
+    duration_seconds = None
+    if started_at_row and started_at_row[0]:
+        duration_seconds = (finished_at - started_at_row[0]).total_seconds()
+
+    conn.execute(
+        """
+        UPDATE pipeline_runs
+        SET status = ?,
+            finished_at = ?,
+            duration_seconds = ?,
+            result_count = ?,
+            summary = ?,
+            error_message = ?,
+            payload_json = ?
+        WHERE id = ?
+        """,
+        [
+            status,
+            finished_at,
+            duration_seconds,
+            result_count,
+            summary,
+            error_message,
+            json.dumps(payload or {}, ensure_ascii=False),
+            run_id,
+        ],
+    )
+
+
+def list_pipeline_runs(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    job_name: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """查询运行记录列表。"""
+    where_parts: list[str] = []
+    params: list[str | int] = []
+
+    if job_name:
+        where_parts.append("job_name = ?")
+        params.append(job_name)
+    if status:
+        where_parts.append("status = ?")
+        params.append(status)
+
+    where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+    params.append(limit)
+    rows = conn.execute(
+        f"""
+        SELECT
+            id,
+            job_name,
+            trigger_mode,
+            status,
+            started_at,
+            finished_at,
+            duration_seconds,
+            result_count,
+            summary,
+            error_message,
+            payload_json
+        FROM pipeline_runs
+        {where_clause}
+        ORDER BY started_at DESC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+    return [_serialize_pipeline_run(row) for row in rows]
+
+
+def get_pipeline_run(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+) -> dict | None:
+    """查询单条运行记录。"""
+    row = conn.execute(
+        """
+        SELECT
+            id,
+            job_name,
+            trigger_mode,
+            status,
+            started_at,
+            finished_at,
+            duration_seconds,
+            result_count,
+            summary,
+            error_message,
+            payload_json
+        FROM pipeline_runs
+        WHERE id = ?
+        """,
+        [run_id],
+    ).fetchone()
+    if not row:
+        return None
+    return _serialize_pipeline_run(row)
+
+
+def _serialize_pipeline_run(row: tuple) -> dict:
+    payload_raw = row[10] or "{}"
+    try:
+        payload = json.loads(payload_raw)
+    except json.JSONDecodeError:
+        payload = {}
+
+    return {
+        "id": row[0],
+        "job_name": row[1],
+        "trigger_mode": row[2],
+        "status": row[3],
+        "started_at": row[4],
+        "finished_at": row[5],
+        "duration_seconds": row[6],
+        "result_count": row[7],
+        "summary": row[8],
+        "error_message": row[9],
+        "payload": payload,
+    }
