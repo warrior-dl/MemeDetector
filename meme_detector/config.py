@@ -29,11 +29,16 @@ class Settings(BaseSettings):
 
     # ── 采集参数 ──
     scout_top_n_videos: int = 20
-    scout_comments_per_video: int = 500
+    scout_comments_per_video: int = 20
     scout_score_threshold: float = 5.0
     scout_new_word_min_docs: int = 3
     scout_delay_min: float = 0.8
     scout_delay_max: float = 2.5
+    scout_comment_retry_times: int = 2
+    scout_comment_backoff_base: float = 3.0
+    scout_risk_cooldown_seconds: float = 20.0
+    scout_risk_skip_threshold: int = 2
+    scout_request_timeout: float = 15.0
     scout_proxy_url: str = ""
 
     # ── AI 参数 ──

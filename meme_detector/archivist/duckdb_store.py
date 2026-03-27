@@ -28,9 +28,14 @@ CREATE TABLE IF NOT EXISTS candidates (
     score         DOUBLE    NOT NULL,
     is_new_word   BOOLEAN   NOT NULL,
     sample_comments TEXT    DEFAULT '',
+    explanation   TEXT      DEFAULT '',
     detected_at   TIMESTAMP DEFAULT NOW(),
     status        TEXT      DEFAULT 'pending'
 );
+"""
+
+_MIGRATE_CANDIDATES_EXPLANATION = """
+ALTER TABLE candidates ADD COLUMN IF NOT EXISTS explanation TEXT DEFAULT '';
 """
 
 _CREATE_MEME_RECORDS = """
@@ -66,6 +71,11 @@ def _ensure_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(_CREATE_WORD_FREQ)
     conn.execute(_CREATE_CANDIDATES)
     conn.execute(_CREATE_MEME_RECORDS)
+    # 兼容旧库：补充新增列
+    try:
+        conn.execute(_MIGRATE_CANDIDATES_EXPLANATION)
+    except Exception:
+        pass
 
 
 def upsert_word_freq(
@@ -185,13 +195,54 @@ def compute_candidates(
     return candidates
 
 
+def get_candidates(
+    conn: duckdb.DuckDBPyConnection,
+    status: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """获取候选梗列表，支持按状态过滤。status=None 返回全部。"""
+    if status:
+        rows = conn.execute(
+            """
+            SELECT word, score, is_new_word, sample_comments, explanation, detected_at, status
+            FROM candidates
+            WHERE status = ?
+            ORDER BY score DESC
+            LIMIT ?
+            """,
+            [status, limit],
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT word, score, is_new_word, sample_comments, explanation, detected_at, status
+            FROM candidates
+            ORDER BY score DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+    return [
+        {
+            "word": r[0],
+            "score": r[1],
+            "is_new_word": r[2],
+            "sample_comments": r[3],
+            "explanation": r[4],
+            "detected_at": r[5],
+            "status": r[6],
+        }
+        for r in rows
+    ]
+
+
 def get_pending_candidates(
     conn: duckdb.DuckDBPyConnection, limit: int = 100
 ) -> list[dict]:
     """获取待 AI 分析的候选词。"""
     rows = conn.execute(
         """
-        SELECT word, score, is_new_word, sample_comments, detected_at
+        SELECT word, score, is_new_word, sample_comments, explanation, detected_at
         FROM candidates
         WHERE status = 'pending'
         ORDER BY score DESC
@@ -205,7 +256,8 @@ def get_pending_candidates(
             "score": r[1],
             "is_new_word": r[2],
             "sample_comments": r[3],
-            "detected_at": r[4],
+            "explanation": r[4],
+            "detected_at": r[5],
         }
         for r in rows
     ]
@@ -230,4 +282,35 @@ def update_candidate_comments(
     conn.execute(
         "UPDATE candidates SET sample_comments = ? WHERE word = ?",
         [sample_comments, word],
+    )
+
+
+def upsert_scout_candidates(
+    conn: duckdb.DuckDBPyConnection,
+    candidates: list[dict],
+) -> None:
+    """
+    写入 Scout LLM 识别的梗候选（IGNORE 已存在的，保留人工审核状态）。
+
+    candidates: [{"phrase": str, "explanation": str, "examples": list[str], "confidence": float}, ...]
+    """
+    if not candidates:
+        return
+    rows = []
+    for c in candidates:
+        phrase = c.get("phrase", "").strip()
+        if not phrase:
+            continue
+        score = float(c.get("confidence", 0.5))
+        explanation = c.get("explanation", "")
+        examples = c.get("examples", [])
+        sample_comments = "\n".join(f"- {e}" for e in examples if e)
+        rows.append((phrase, score, True, sample_comments, explanation))
+
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO candidates (word, score, is_new_word, sample_comments, explanation)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        rows,
     )

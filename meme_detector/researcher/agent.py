@@ -80,8 +80,10 @@ async def _batch_screen(
     word_list = []
     for c in candidates:
         sample = c.get("sample_comments", "").strip()
+        explanation = c.get("explanation", "").strip()
+        context = explanation if explanation else (sample[:150] if sample else "无")
         word_list.append(
-            f'- 词: "{c["word"]}" | 评论示例: {sample[:150] if sample else "无"}'
+            f'- 词: "{c["word"]}" | 上下文: {context}'
         )
 
     user_msg = (

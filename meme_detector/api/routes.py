@@ -7,6 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from meme_detector.archivist.duckdb_store import (
+    get_candidates,
     get_conn,
     get_pending_candidates,
     update_candidate_status,
@@ -62,12 +63,13 @@ async def get_meme_detail(meme_id: str) -> dict:
 
 # ── 候选词管理（内部使用）─────────────────────────────────────
 
-@router.get("/candidates", summary="获取待审核候选词列表")
+@router.get("/candidates", summary="获取候选梗列表")
 async def list_candidates(
+    status: str | None = Query(None, description="状态过滤：pending / accepted / rejected，不传则返回全部"),
     limit: int = Query(50, ge=1, le=200),
 ) -> list[dict]:
     conn = get_conn()
-    candidates = get_pending_candidates(conn, limit=limit)
+    candidates = get_candidates(conn, status=status, limit=limit)
     conn.close()
     return candidates
 
