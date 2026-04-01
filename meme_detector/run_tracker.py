@@ -5,6 +5,7 @@ Pipeline 任务运行记录封装。
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import Any
 
 from meme_detector.archivist.duckdb_store import (
@@ -12,6 +13,8 @@ from meme_detector.archivist.duckdb_store import (
     finish_pipeline_run,
     get_conn,
 )
+
+_current_run_id: ContextVar[str | None] = ContextVar("current_run_id", default=None)
 
 
 async def execute_tracked_job(
@@ -25,9 +28,11 @@ async def execute_tracked_job(
     run_id = create_pipeline_run(conn, job_name=job_name, trigger_mode=trigger_mode)
     conn.close()
 
+    token = _current_run_id.set(run_id)
     try:
         result = await runner()
     except Exception as exc:
+        _current_run_id.reset(token)
         conn = get_conn()
         finish_pipeline_run(
             conn,
@@ -40,6 +45,7 @@ async def execute_tracked_job(
         conn.close()
         raise
 
+    _current_run_id.reset(token)
     summary = _build_job_summary(job_name, result)
     conn = get_conn()
     finish_pipeline_run(
@@ -54,24 +60,20 @@ async def execute_tracked_job(
     return result
 
 
+def get_current_run_id() -> str | None:
+    """返回当前正在执行的 pipeline run_id。"""
+    return _current_run_id.get()
+
+
 def _build_job_summary(job_name: str, result: Any) -> dict[str, Any]:
     if job_name == "scout":
-        candidates = result if isinstance(result, list) else []
-        candidate_items = [
-            {
-                "phrase": item.get("phrase", ""),
-                "confidence": item.get("confidence", 0),
-                "explanation": item.get("explanation", ""),
-            }
-            for item in candidates[:10]
-        ]
+        payload = result if isinstance(result, dict) else {}
+        video_count = int(payload.get("video_count", 0))
+        comment_count = int(payload.get("comment_count", 0))
         return {
-            "result_count": len(candidates),
-            "summary": f"发现 {len(candidates)} 个候选梗",
-            "payload": {
-                "candidate_count": len(candidates),
-                "candidates": candidate_items,
-            },
+            "result_count": video_count,
+            "summary": f"入库 {video_count} 个视频快照，采集 {comment_count} 条评论",
+            "payload": payload,
         }
 
     if job_name == "research" and isinstance(result, dict):

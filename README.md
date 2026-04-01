@@ -2,7 +2,8 @@
 
 自动发现并归档 B 站亚文化新梗的 AI Pipeline。
 
-每天采集高热分区评论与弹幕，通过词频环比算法发现疑似新梗，由 DeepSeek-V3 完成溯源分析，最终入库到可全文检索的梗百科。
+每天采集高热分区视频元信息与评论，先把原始快照写入 DuckDB，再由 `Researcher` 在分析阶段判断候选词、完成溯源分析，最终入库到可全文检索的梗百科。
+`Scout` 只做评论和视频元数据采集，不调用 LLM；`Researcher` 会先从原始评论中提取候选词，再对评论关联视频显式调用 BibiGPT，把视频背景和评论一起交给 Agent 分析。超过 15 分钟的视频会自动跳过并缓存结果。
 
 ## 快速开始
 
@@ -21,7 +22,7 @@ pip install -e ".[dev]"
 # 3. 启动 Meilisearch
 docker compose up -d
 
-# 4. 手动触发一次采集（冷启动积累基线数据）
+# 4. 手动触发一次采集（写入原始视频/评论快照）
 python -m meme_detector scout
 
 # 5. 手动触发一次 AI 分析
@@ -32,6 +33,7 @@ python -m meme_detector serve
 # 访问 http://localhost:8000/docs 查看接口文档
 # 访问 http://localhost:8000/admin 查看前端管理台
 # 访问 http://localhost:8000/admin/candidates 查看候选梗分页管理页
+# 访问 http://localhost:8000/admin/conversations 查看 Agent 对话记录页
 ```
 
 ### 生产部署（全容器化）
@@ -53,13 +55,13 @@ docker compose --profile prod up -d
 ## 架构
 
 ```
-B站评论/弹幕
+B站视频元信息/评论
     │
     ▼
-[scout]  每日采集 → Jieba 分词 → DuckDB 词频时序
+[scout]  每日采集 → DuckDB 原始视频快照
     │
     ▼  (每周一)
-[researcher]  DeepSeek 批量筛选 → 深度溯源 → URL验证
+[researcher]  候选词提取 → DeepSeek 批量筛选 → 深度溯源 → URL验证
     │
     ▼
 [Meilisearch]  梗库全文检索
@@ -72,14 +74,13 @@ B站评论/弹幕
 
 ```
 meme_detector/       # 源码包（各子目录含 README.md）
-├── scout/           # 采集 + 词频统计 + 候选词发现
-├── researcher/      # AI 三步分析（快筛→深度→验证）
-├── archivist/       # DuckDB 时序存储 + Meilisearch 梗库
+├── scout/           # 采集 + 原始快照入库
+├── researcher/      # 候选提取 + AI 三步分析（快筛→深度→验证）
+├── archivist/       # DuckDB 原始/候选存储 + Meilisearch 梗库
 └── api/             # FastAPI REST 接口
 
 data/
-├── dicts/userdict.txt   # Jieba 自定义梗词典
-└── duckdb/freq.db       # 词频时序数据库（核心数据资产）
+└── duckdb/freq.db       # DuckDB 数据库（原始快照 / 候选 / 缓存）
 
 docs/                # 设计文档
 tests/               # 单元测试
@@ -90,9 +91,8 @@ tests/               # 单元测试
 | 用途 | 选型 |
 |------|------|
 | 数据采集 | bilibili-api (Nemo2011 fork) |
-| 中文分词 | Jieba |
 | AI 框架 | PydanticAI + DeepSeek-V3 |
-| 词频存储 | DuckDB |
+| 原始/候选存储 | DuckDB |
 | 梗库检索 | Meilisearch |
 | API 服务 | FastAPI + Uvicorn |
 | 定时调度 | APScheduler |

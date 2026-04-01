@@ -34,5 +34,9 @@ def create_app() -> FastAPI:
     async def admin_candidates_page() -> FileResponse:
         return FileResponse(static_dir / "candidates.html")
 
+    @app.get("/admin/conversations", include_in_schema=False)
+    async def admin_conversations_page() -> FileResponse:
+        return FileResponse(static_dir / "conversations.html")
+
     app.include_router(router, prefix="/api/v1")
     return app

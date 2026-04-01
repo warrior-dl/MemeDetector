@@ -2,7 +2,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from meme_detector.archivist.duckdb_store import (
+    create_agent_conversation,
     create_pipeline_run,
+    finish_agent_conversation,
     finish_pipeline_run,
     get_conn,
     upsert_scout_candidates,
@@ -53,6 +55,7 @@ def client(tmp_path, monkeypatch):
 def test_admin_page_and_runs_api(client):
     conn = get_conn()
     run_id = create_pipeline_run(conn, job_name="scout", trigger_mode="manual")
+    research_run_id = create_pipeline_run(conn, job_name="research", trigger_mode="manual")
     upsert_scout_candidates(
         conn,
         [
@@ -78,23 +81,45 @@ def test_admin_page_and_runs_api(client):
         summary="发现 2 个候选梗",
         payload={"candidate_count": 2},
     )
+    conversation_id = create_agent_conversation(
+        conn,
+        run_id=research_run_id,
+        agent_name="researcher",
+        word="抽象圣经",
+    )
+    finish_agent_conversation(
+        conn,
+        conversation_id,
+        status="success",
+        summary="完成词条分析",
+        messages_json='[{"kind":"request"},{"kind":"response"}]',
+        message_count=2,
+        output_json='{"title":"抽象圣经","definition":"测试输出"}',
+    )
     conn.close()
 
     admin_page = client.get("/admin")
     assert admin_page.status_code == 200
     assert "MemeDetector 控制台" in admin_page.text
     assert "/admin/candidates" in admin_page.text
+    assert "/admin/conversations" in admin_page.text
 
     candidates_page = client.get("/admin/candidates")
     assert candidates_page.status_code == 200
     assert "候选梗队列" in candidates_page.text
 
+    conversations_page = client.get("/admin/conversations")
+    assert conversations_page.status_code == 200
+    assert "Agent 对话记录" in conversations_page.text
+
     runs_resp = client.get("/api/v1/runs")
     assert runs_resp.status_code == 200
     body = runs_resp.json()
-    assert len(body) == 1
-    assert body[0]["job_name"] == "scout"
-    assert body[0]["summary"] == "发现 2 个候选梗"
+    assert len(body) == 2
+    assert any(item["job_name"] == "scout" for item in body)
+    assert any(item["job_name"] == "research" for item in body)
+    scout_run = next(item for item in body if item["job_name"] == "scout")
+    assert scout_run["summary"] == "发现 2 个候选梗"
 
     jobs_resp = client.get("/api/v1/jobs")
     assert jobs_resp.status_code == 200
@@ -114,3 +139,15 @@ def test_admin_page_and_runs_api(client):
     candidates_after = client.get("/api/v1/candidates/page?limit=10&offset=0")
     assert candidates_after.status_code == 200
     assert candidates_after.json()["total"] == 0
+
+    conversations_resp = client.get("/api/v1/agent-conversations?limit=10&offset=0")
+    assert conversations_resp.status_code == 200
+    conversations_body = conversations_resp.json()
+    assert conversations_body["total"] == 1
+    assert conversations_body["items"][0]["word"] == "抽象圣经"
+
+    conversation_detail_resp = client.get(f"/api/v1/agent-conversations/{conversation_id}")
+    assert conversation_detail_resp.status_code == 200
+    conversation_detail = conversation_detail_resp.json()
+    assert conversation_detail["message_count"] == 2
+    assert conversation_detail["output"]["title"] == "抽象圣经"

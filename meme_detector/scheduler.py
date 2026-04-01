@@ -2,8 +2,8 @@
 APScheduler 定时任务调度器。
 
 任务表：
-- 每日 02:05: Scout（采集 + 词频统计）
-- 每周一 06:00: Researcher（AI 分析 + 入库）
+- 每日 02:05: Scout（采集 + 原始快照入库）
+- 每周一 06:00: Researcher（候选提取 + AI 分析 + 入库）
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ def start_scheduler() -> None:
         func=lambda: _run_async(_scout_job(trigger_mode="scheduled")),
         trigger=CronTrigger(hour=2, minute=5, timezone="Asia/Shanghai"),
         id="daily_scout",
-        name="每日采集与词频统计",
+        name="每日采集与原始入库",
         replace_existing=True,
         misfire_grace_time=3600,
     )
@@ -41,7 +41,7 @@ def start_scheduler() -> None:
         func=lambda: _run_async(_research_job(trigger_mode="scheduled")),
         trigger=CronTrigger(day_of_week="mon", hour=6, minute=0, timezone="Asia/Shanghai"),
         id="weekly_research",
-        name="每周 AI 分析入库",
+        name="每周候选提取与 AI 分析入库",
         replace_existing=True,
         misfire_grace_time=3600,
     )

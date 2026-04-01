@@ -24,8 +24,13 @@ async def bilibili_search(keyword: str, limit: int = 5) -> list[dict]:
         videos = result.get("result", [])[:limit]
         return [
             {
-                "title": v.get("title", "").replace("<em class=\"keyword\">", "").replace("</em>", ""),
+                "title": (
+                    v.get("title", "")
+                    .replace("<em class=\"keyword\">", "")
+                    .replace("</em>", "")
+                ),
                 "bvid": v.get("bvid", ""),
+                "url": f'https://www.bilibili.com/video/{v.get("bvid", "")}',
                 "description": v.get("description", "")[:200],
                 "play": v.get("play", 0),
                 "pubdate": v.get("pubdate", 0),

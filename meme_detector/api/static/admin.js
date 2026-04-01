@@ -199,7 +199,11 @@ function renderRunPayload(run) {
             .map(
               (item) => `
                 <span class="chip" title="${escapeHtml(item.explanation || "")}">
-                  ${escapeHtml(item.phrase || "--")} · ${formatPercent(item.confidence)}
+                  ${escapeHtml(item.phrase || "--")} · ${
+                    item.score != null
+                      ? `score ${Number(item.score || 0).toFixed(2)}`
+                      : formatPercent(item.confidence)
+                  }
                 </span>
               `,
             )

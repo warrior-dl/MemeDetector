@@ -8,10 +8,12 @@ from fastapi import APIRouter, HTTPException, Query
 
 from meme_detector.archivist.duckdb_store import (
     delete_all_candidates,
+    get_agent_conversation,
     get_candidates,
     get_candidates_page,
     get_conn,
     get_pipeline_run,
+    list_agent_conversations,
     list_pipeline_runs,
     update_candidate_status,
 )
@@ -152,6 +154,37 @@ async def get_run_detail(run_id: str) -> dict:
 @router.get("/jobs", summary="获取调度任务概览")
 async def list_jobs() -> list[dict]:
     return get_scheduler_jobs()
+
+
+@router.get("/agent-conversations", summary="分页获取 Agent 对话记录")
+async def list_conversations(
+    run_id: str | None = Query(None, description="关联的运行记录 ID"),
+    word: str | None = Query(None, description="词条关键字过滤"),
+    status: str | None = Query(None, description="状态：running / success / failed"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    conn = get_conn()
+    result = list_agent_conversations(
+        conn,
+        run_id=run_id,
+        word=word,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    conn.close()
+    return result
+
+
+@router.get("/agent-conversations/{conversation_id}", summary="获取 Agent 对话详情")
+async def get_conversation_detail(conversation_id: str) -> dict:
+    conn = get_conn()
+    conversation = get_agent_conversation(conn, conversation_id)
+    conn.close()
+    if not conversation:
+        raise HTTPException(status_code=404, detail=f"对话记录 '{conversation_id}' 不存在")
+    return conversation
 
 
 # ── 统计概览 ─────────────────────────────────────────────────

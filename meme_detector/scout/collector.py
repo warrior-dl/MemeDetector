@@ -11,9 +11,9 @@ import re
 import time
 from dataclasses import dataclass
 
-from bilibili_api import video, rank, comment, Credential, request_settings
-from bilibili_api.rank import RankType
+from bilibili_api import Credential, comment, rank, request_settings, video
 from bilibili_api.comment import CommentResourceType, OrderType
+from bilibili_api.rank import RankType
 from rich.console import Console
 
 from meme_detector.config import settings
@@ -35,6 +35,9 @@ RETRYABLE_STATUS_CODES = {412, 429, 500, 502, 503, 504}
 class VideoTexts:
     bvid: str
     partition: str
+    title: str
+    description: str
+    url: str
     comments: list[str]
 
 
@@ -217,15 +220,16 @@ async def _fetch_partition_top_videos(
     try:
         # 获取分区排行榜
         rank_result = await rank.get_rank(type_=rank_type)
-        bvids = [item["bvid"] for item in rank_result["list"][:top_n]]
+        video_items = rank_result["list"][:top_n]
     except Exception as e:
         console.print(f"[red]获取分区 {partition_name} 排行榜失败: {e}[/red]")
         return []
 
-    console.print(f"[cyan]  分区 [{partition_name}] 共 {len(bvids)} 个视频[/cyan]")
+    console.print(f"[cyan]  分区 [{partition_name}] 共 {len(video_items)} 个视频[/cyan]")
 
-    for i, bvid in enumerate(bvids, 1):
-        console.print(f"  [{i}/{len(bvids)}] {bvid} ...", end=" ")
+    for i, item in enumerate(video_items, 1):
+        bvid = item.get("bvid", "")
+        console.print(f"  [{i}/{len(video_items)}] {bvid} ...", end=" ")
         try:
             comments: list[str] = []
             if risk_state.should_skip_comments():
@@ -247,6 +251,9 @@ async def _fetch_partition_top_videos(
                 VideoTexts(
                     bvid=bvid,
                     partition=partition_name,
+                    title=str(item.get("title", "")),
+                    description=str(item.get("description", ""))[:500],
+                    url=f"https://www.bilibili.com/video/{bvid}",
                     comments=comments,
                 )
             )

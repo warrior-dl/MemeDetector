@@ -2,16 +2,20 @@
 DuckDB 词频存储与 Score 计算测试。
 """
 
-import pytest
 from datetime import date, timedelta
 
+import pytest
+
 from meme_detector.archivist.duckdb_store import (
-    get_conn,
-    upsert_word_freq,
     compute_candidates,
+    get_conn,
     get_pending_candidates,
+    get_pending_scout_raw_videos,
     update_candidate_status,
+    upsert_word_freq,
 )
+from meme_detector.scout.collector import VideoTexts
+from meme_detector.scout.scorer import run_scout
 
 
 @pytest.fixture
@@ -22,6 +26,7 @@ def conn(tmp_path, monkeypatch):
 
     # 重新导入以使 monkeypatch 生效
     import importlib
+
     import meme_detector.archivist.duckdb_store as m
     importlib.reload(m)
 
@@ -107,3 +112,60 @@ class TestComputeCandidates:
         update_candidate_status(conn, "绷不住", "accepted")
         pending_after = get_pending_candidates(conn)
         assert not any(c["word"] == "绷不住" for c in pending_after)
+
+
+@pytest.mark.asyncio
+async def test_run_scout_persists_raw_video_snapshots(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "scout.db")
+    monkeypatch.setattr("meme_detector.archivist.duckdb_store.settings.duckdb_path", db_path)
+
+    async def fake_collect_all_partitions():
+        return {
+            "鬼畜": [
+                VideoTexts(
+                    bvid="BV1TEST001",
+                    partition="鬼畜",
+                    title="依托答辩合集",
+                    description="第一条视频",
+                    url="https://www.bilibili.com/video/BV1TEST001",
+                    comments=["这也太依托答辩了", "依托答辩名场面"],
+                ),
+                VideoTexts(
+                    bvid="BV1TEST002",
+                    partition="鬼畜",
+                    title="答辩现场",
+                    description="第二条视频",
+                    url="https://www.bilibili.com/video/BV1TEST002",
+                    comments=["满屏都是依托答辩", "笑死"],
+                ),
+                VideoTexts(
+                    bvid="BV1TEST003",
+                    partition="鬼畜",
+                    title="抽象时刻",
+                    description="第三条视频",
+                    url="https://www.bilibili.com/video/BV1TEST003",
+                    comments=["这就是依托答辩", "太抽象了"],
+                ),
+            ]
+        }
+
+    monkeypatch.setattr(
+        "meme_detector.scout.scorer.collect_all_partitions",
+        fake_collect_all_partitions,
+    )
+
+    summary = await run_scout(target_date=TODAY)
+
+    assert summary["video_count"] == 3
+    assert summary["comment_count"] == 6
+
+    conn = get_conn()
+    raw_videos = get_pending_scout_raw_videos(conn)
+    pending = get_pending_candidates(conn)
+    conn.close()
+
+    assert len(raw_videos) == 3
+    target = next(item for item in raw_videos if item["bvid"] == "BV1TEST001")
+    assert target["title"] == "依托答辩合集"
+    assert target["comments"] == ["这也太依托答辩了", "依托答辩名场面"]
+    assert pending == []

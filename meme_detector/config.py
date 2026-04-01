@@ -1,5 +1,4 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -21,6 +20,11 @@ class Settings(BaseSettings):
 
     # ── Web 搜索 ──
     serper_api_key: str = ""
+
+    # ── BibiGPT ──
+    bibigpt_api_token: str = ""
+    bibigpt_base_url: str = "https://api.bibigpt.co/api"
+    bibigpt_max_duration_seconds: int = 900
 
     # ── Meilisearch ──
     meili_url: str = "http://localhost:7700"

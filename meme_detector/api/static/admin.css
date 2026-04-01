@@ -151,7 +151,8 @@ body {
 }
 
 .primary-button,
-select {
+select,
+.input-field {
   border: 1px solid rgba(32, 24, 15, 0.12);
   border-radius: 999px;
   background: var(--panel-strong);
@@ -278,6 +279,11 @@ select {
 
 select {
   padding: 10px 14px;
+}
+
+.input-field {
+  min-height: 42px;
+  padding: 0 14px;
 }
 
 .runs-list {
@@ -453,6 +459,52 @@ select {
   line-height: 1.6;
 }
 
+.conversation-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.5fr);
+  gap: 18px;
+}
+
+.conversation-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 16px 16px;
+  max-height: 760px;
+  overflow: auto;
+}
+
+.conversation-item {
+  border: 1px solid transparent;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.52);
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+}
+
+.conversation-item:hover,
+.conversation-item.active {
+  border-color: rgba(45, 102, 151, 0.24);
+  background: rgba(255, 255, 255, 0.86);
+  transform: translateX(2px);
+}
+
+.conversation-detail {
+  padding: 0 24px 24px;
+}
+
+.detail-block {
+  margin-top: 16px;
+}
+
+.detail-block h4 {
+  margin: 0 0 8px;
+}
+
+.detail-block pre {
+  max-height: 420px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -503,7 +555,8 @@ pre {
 @media (max-width: 1080px) {
   .stats-grid,
   .workspace,
-  .lower-grid {
+  .lower-grid,
+  .conversation-layout {
     grid-template-columns: 1fr;
   }
 

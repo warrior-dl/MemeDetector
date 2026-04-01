@@ -2,10 +2,7 @@
 词频统计与候选词发现算法测试。
 """
 
-import pytest
-from datetime import date, timedelta
-
-from meme_detector.scout.segmenter import tokenize, compute_word_freq, extract_sample_comments
+from meme_detector.scout.segmenter import compute_word_freq, extract_sample_comments, tokenize
 
 
 class TestTokenize:

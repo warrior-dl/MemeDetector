@@ -1,6 +1,6 @@
 # researcher — AI 分析模块
 
-对候选词执行三步 AI 分析，生成结构化的 `MemeRecord` 并写入梗库。
+先从 Scout 原始评论中提取候选词，再执行 AI 分析，生成结构化的 `MemeRecord` 并写入梗库。
 
 ## 文件
 
@@ -15,9 +15,15 @@
 - **自动**：每周一 06:00 由 `scheduler.py` 调用 `run_research()`
 - **手动**：`python -m meme_detector research`
 
-## 三步分析流程
+## 四步分析流程
 
 ```
+Step 0  候选词提取
+        输入：全部未处理的 Scout 原始视频快照
+        模型：DeepSeek-V3（JSON 模式，低温度）
+        输出：候选词队列 { word, confidence, reason, related_bvids, sample_comments }
+        落库：写入 candidates 表，并将对应原始快照标记 processed
+
 Step 1  批量快筛
         输入：全部 pending 候选词（最多 AI_BATCH_SIZE=50 个/批）
         模型：DeepSeek-V3（JSON 模式，低温度）
@@ -26,8 +32,10 @@ Step 1  批量快筛
 
 Step 2  深度分析（仅 Step1 通过的词）
         模型：DeepSeek-V3 via PydanticAI Agent
-        工具调用：
-          bilibili_search(word)         → 相关视频标题 / BV 号
+        主流程预取：
+          Scout 关联视频 → 显式调用 BibiGPT 获取视频背景（带 DuckDB 缓存，超 15 分钟跳过）
+        Agent 可调用工具：
+          bilibili_search(word)         → 补充相关视频标题 / BV 号
           web_search("[word] 梗 来源")  → 外部背景
         输出：完整 MemeRecord（含 definition、origin、source_urls 等）
 
@@ -44,6 +52,7 @@ Step 3  来源验证
 |----------|------|------|
 | `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | ✅ |
 | `SERPER_API_KEY` | Google Search via Serper.dev | 可选（缺失则跳过 Web 搜索） |
+| `BIBIGPT_API_TOKEN` | BibiGPT 视频总结 API | 可选（缺失则保留元数据，不做视频总结） |
 
 ## 幻觉防护
 

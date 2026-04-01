@@ -41,3 +41,13 @@ class QuickScreenResult(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, description="置信度")
     candidate_category: str = Field(description="初步分类猜测")
     reason: str = Field(description="简短理由（1-2句）")
+
+
+class CandidateSeed(BaseModel):
+    """Researcher 基于 Scout 原始评论归纳出的候选词。"""
+
+    word: str = Field(description="候选词或短语")
+    confidence: float = Field(ge=0.0, le=1.0, description="提取置信度")
+    reason: str = Field(description="为何值得进入候选队列")
+    related_bvids: list[str] = Field(default_factory=list, description="相关视频 BV 号")
+    sample_comments: list[str] = Field(default_factory=list, description="代表性评论")
