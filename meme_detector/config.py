@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     # ── AI 参数 ──
     ai_batch_size: int = 50
     ai_confidence_threshold: float = 0.65
+    research_screen_timeout_seconds: float = 60.0
+    research_screen_max_retries: int = 1
+    research_llm_timeout_seconds: float = 120.0
+    research_llm_max_retries: int = 1
     miner_comment_confidence_threshold: float = 0.6
     miner_comments_batch_size: int = 8
     miner_llm_timeout_seconds: float = 90.0
@@ -60,6 +64,9 @@ class Settings(BaseSettings):
     duckdb_path: str = "data/duckdb/freq.db"
     userdict_path: str = "data/dicts/userdict.txt"
     media_asset_root: str = "data/assets"
+    log_dir: str = "logs"
+    log_level: str = "INFO"
+    log_json_filename: str = "app.jsonl"
 
 
 # 全局单例

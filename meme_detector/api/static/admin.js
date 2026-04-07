@@ -1,6 +1,7 @@
 const state = {
   runs: [],
   selectedRunId: null,
+  triggeringJobs: new Set(),
 };
 
 const endpoints = {
@@ -22,6 +23,18 @@ document.getElementById("jobFilter").addEventListener("change", () => {
 
 document.getElementById("statusFilter").addEventListener("change", () => {
   loadRuns();
+});
+
+document.getElementById("runScoutButton").addEventListener("click", () => {
+  triggerJob("scout");
+});
+
+document.getElementById("runMinerButton").addEventListener("click", () => {
+  triggerJob("miner");
+});
+
+document.getElementById("runResearchButton").addEventListener("click", () => {
+  triggerJob("research");
 });
 
 loadDashboard();
@@ -100,7 +113,9 @@ function renderJobs(jobs) {
           <p class="section-kicker">${escapeHtml(job.id)}</p>
           <h3>${escapeHtml(job.name)}</h3>
           <p>下一次运行：${formatDateTime(job.next_run_time)}</p>
+          <p>当前状态：${job.is_running ? "运行中" : "空闲"}</p>
           <p class="mono">${escapeHtml(job.trigger || "--")}</p>
+          ${job.last_error ? `<p class="run-meta">${escapeHtml(job.last_error)}</p>` : ""}
         </article>
       `,
     )
@@ -227,6 +242,7 @@ function renderRunPayload(run) {
     const accepted = payload.accepted_records || [];
     const rejected = payload.rejected_words || [];
     const failed = payload.failed_words || [];
+    const screenFailed = payload.screen_failed_words || [];
     return `
       <div class="detail-summary">
         <p>筛选 ${payload.screened_count || 0} 个候选，深度分析 ${payload.deep_analysis_count || 0} 个。</p>
@@ -234,6 +250,7 @@ function renderRunPayload(run) {
           ${accepted.map((item) => `<span class="chip">${escapeHtml(item.title || item.id)}</span>`).join("") || '<span class="chip muted">本次无新增入库</span>'}
         </div>
         <p class="detail-meta">拒绝候选：${rejected.length ? escapeHtml(rejected.join("、")) : "无"}</p>
+        <p class="detail-meta">待重试候选：${screenFailed.length ? escapeHtml(screenFailed.join("、")) : "无"}</p>
         <p class="detail-meta">分析失败：${failed.length ? escapeHtml(failed.join("、")) : "无"}</p>
       </div>
     `;
@@ -256,11 +273,43 @@ function renderRawVideos(items) {
           <td>${escapeHtml(item.title || item.bvid || "--")}</td>
           <td>${escapeHtml(item.partition || "--")}</td>
           <td>${item.comment_count ?? 0}</td>
-          <td>${statusBadge(item.candidate_status)}</td>
+          <td>${stageBadge(item.pipeline_stage, item.miner_status, item.candidate_status)}</td>
         </tr>
       `,
     )
     .join("");
+}
+
+async function triggerJob(jobName) {
+  if (state.triggeringJobs.has(jobName)) {
+    return;
+  }
+
+  state.triggeringJobs.add(jobName);
+  updateTriggerButtons();
+  setText("jobActionFeedback", `${formatJobName(jobName)} 请求发送中...`);
+  try {
+    const response = await fetch(`/api/v1/jobs/${encodeURIComponent(jobName)}/run`, {
+      method: "POST",
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || `触发失败: ${response.status}`);
+    }
+    setText("jobActionFeedback", payload.message || `${formatJobName(jobName)} 已触发`);
+    await loadDashboard();
+  } catch (error) {
+    setText("jobActionFeedback", error.message || String(error));
+  } finally {
+    state.triggeringJobs.delete(jobName);
+    updateTriggerButtons();
+  }
+}
+
+function updateTriggerButtons() {
+  document.getElementById("runScoutButton").disabled = state.triggeringJobs.has("scout");
+  document.getElementById("runMinerButton").disabled = state.triggeringJobs.has("miner");
+  document.getElementById("runResearchButton").disabled = state.triggeringJobs.has("research");
 }
 
 function renderCandidates(candidates) {
@@ -323,6 +372,20 @@ function statusBadge(status) {
     rejected: "已拒绝",
   };
   return `<span class="badge ${normalized}">${labelMap[normalized] || escapeHtml(normalized)}</span>`;
+}
+
+function stageBadge(stage, minerStatus, candidateStatus) {
+  const normalized = String(stage || "").toLowerCase();
+  if (normalized === "researched") {
+    return `<span class="badge success">Research 已消费</span>`;
+  }
+  if (normalized === "mined") {
+    return `<span class="badge processed">Miner 已完成</span>`;
+  }
+  if (normalized === "scouted") {
+    return `<span class="badge pending">待 Miner</span>`;
+  }
+  return `${statusBadge(minerStatus)} ${statusBadge(candidateStatus)}`;
 }
 
 function formatDateTime(value) {

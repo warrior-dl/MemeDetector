@@ -120,7 +120,7 @@ function renderList() {
         <article class="conversation-item ${activeClass}" data-key="${escapeHtml(itemKey(item))}">
           <div class="run-header">
             <h3 class="run-title">${escapeHtml(title)}</h3>
-            ${statusBadge(item.candidate_status)}
+            ${pipelineStageBadge(item.pipeline_stage)}
           </div>
           <p class="run-meta">${escapeHtml(item.partition || "--")} · ${(item.tags || []).length} 个标签 · ${item.comment_count ?? 0} 条评论 · ${item.picture_count ?? 0} 张图</p>
           <p class="run-meta">${formatDateTime(item.collected_date)} · <span class="mono">${escapeHtml(item.bvid)}</span></p>
@@ -151,7 +151,7 @@ function renderDetail(detail) {
           <p class="section-kicker">${escapeHtml(detail.partition || "--")}</p>
           <h3>${escapeHtml(detail.title || detail.bvid || "--")}</h3>
         </div>
-        ${statusBadge(detail.candidate_status)}
+        ${pipelineStageBadge(detail.pipeline_stage)}
       </div>
       <div class="detail-grid">
         <div class="metric">
@@ -171,7 +171,15 @@ function renderDetail(detail) {
           <strong>${detail.picture_count ?? 0}</strong>
         </div>
         <div class="metric">
-          <span class="section-kicker">提取完成时间</span>
+          <span class="section-kicker">Miner 状态</span>
+          <strong>${statusLabel(detail.miner_status)}</strong>
+        </div>
+        <div class="metric">
+          <span class="section-kicker">Research 状态</span>
+          <strong>${statusLabel(detail.candidate_status)}</strong>
+        </div>
+        <div class="metric">
+          <span class="section-kicker">Research 完成时间</span>
           <strong>${escapeHtml(formatDateTime(detail.candidate_extracted_at))}</strong>
         </div>
       </div>
@@ -274,6 +282,30 @@ function statusBadge(status) {
     processed: "已提取",
   };
   return `<span class="badge ${normalized}">${labelMap[normalized] || escapeHtml(normalized)}</span>`;
+}
+
+function pipelineStageBadge(stage) {
+  const normalized = String(stage || "").toLowerCase();
+  const labelMap = {
+    scouted: "待 Miner",
+    mined: "待 Research",
+    researched: "已完成",
+  };
+  const classMap = {
+    scouted: "pending",
+    mined: "processed",
+    researched: "success",
+  };
+  return `<span class="badge ${classMap[normalized] || "pending"}">${labelMap[normalized] || escapeHtml(normalized)}</span>`;
+}
+
+function statusLabel(status) {
+  const normalized = String(status || "pending").toLowerCase();
+  const labelMap = {
+    pending: "待处理",
+    processed: "已完成",
+  };
+  return labelMap[normalized] || normalized;
 }
 
 function formatDateTime(value) {

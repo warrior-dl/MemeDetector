@@ -14,6 +14,7 @@ from meme_detector.archivist.duckdb_store import (
     upsert_scout_raw_videos,
 )
 from meme_detector.researcher.agent import (
+    _partition_screen_results,
     _build_research_provider,
     _deep_analyze,
     deep_agent,
@@ -33,13 +34,14 @@ class _FakeAgentResult:
         return []
 
 
-def test_deep_agent_does_not_expose_bibi_tool():
+def test_deep_agent_does_not_expose_bilibili_tools():
     assert "bilibili_video_context" not in deep_agent._function_toolset.tools
+    assert "bilibili_search" not in deep_agent._function_toolset.tools
 
 
 def test_deep_agent_exposes_byte_search_tools():
-    assert "web_search_summary" in deep_agent._function_toolset.tools
-    assert "web_search" in deep_agent._function_toolset.tools
+    assert "volcengine_web_search_summary" in deep_agent._function_toolset.tools
+    assert "volcengine_web_search" in deep_agent._function_toolset.tools
 
 
 def test_build_research_provider_uses_moonshot_for_kimi_models():
@@ -67,6 +69,36 @@ def test_build_research_provider_falls_back_to_openai_provider():
         base_url="https://example.com/v1",
     )
     assert isinstance(provider, OpenAIProvider)
+
+
+def test_partition_screen_results_keeps_unreturned_candidates_pending():
+    candidates = [
+        {"word": "依托答辩", "score": 91.0},
+        {"word": "电子榨菜", "score": 78.0},
+        {"word": "普通词", "score": 12.0},
+    ]
+    screen_results = [
+        QuickScreenResult(
+            word="依托答辩",
+            is_meme=True,
+            confidence=0.95,
+            candidate_category="抽象",
+            reason="符合圈层梗表达",
+        ),
+        QuickScreenResult(
+            word="普通词",
+            is_meme=False,
+            confidence=0.88,
+            candidate_category="其他",
+            reason="只是普通口语",
+        ),
+    ]
+
+    to_deep, rejected, pending_retry = _partition_screen_results(candidates, screen_results)
+
+    assert [item["word"] for item in to_deep] == ["依托答辩"]
+    assert rejected == ["普通词"]
+    assert pending_retry == ["电子榨菜"]
 
 
 @pytest.mark.asyncio
@@ -133,11 +165,11 @@ async def test_deep_analyze_injects_prefetched_video_context(monkeypatch):
         return [{"title": "不应触发", "link": "https://example.com/unused", "snippet": "unused"}]
 
     monkeypatch.setattr(
-        "meme_detector.researcher.agent.web_search_summary",
+        "meme_detector.researcher.agent.volcengine_web_search_summary",
         fake_web_search_summary,
     )
     monkeypatch.setattr(
-        "meme_detector.researcher.agent.web_search",
+        "meme_detector.researcher.agent.volcengine_web_search",
         fake_web_search,
     )
     monkeypatch.setattr("meme_detector.researcher.agent.get_current_run_id", lambda: None)
@@ -228,11 +260,11 @@ async def test_deep_analyze_falls_back_to_web_search_when_summary_insufficient(m
         fake_get_bilibili_video_context,
     )
     monkeypatch.setattr(
-        "meme_detector.researcher.agent.web_search_summary",
+        "meme_detector.researcher.agent.volcengine_web_search_summary",
         fake_web_search_summary,
     )
     monkeypatch.setattr(
-        "meme_detector.researcher.agent.web_search",
+        "meme_detector.researcher.agent.volcengine_web_search",
         fake_web_search,
     )
     monkeypatch.setattr("meme_detector.researcher.agent.get_current_run_id", lambda: None)

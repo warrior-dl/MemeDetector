@@ -4,6 +4,7 @@ REST API 路由。
 
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import date
 from pathlib import Path
 
@@ -32,9 +33,19 @@ from meme_detector.archivist.meili_store import (
     search_memes,
     update_human_verified,
 )
+from meme_detector.pipeline_service import (
+    JOB_NAMES,
+    get_all_job_runtime_states,
+    start_background_job,
+)
 from meme_detector.scheduler import get_scheduler_jobs
 
 router = APIRouter()
+
+
+def _run_with_conn(callback):
+    with closing(get_conn()) as conn:
+        return callback(conn)
 
 
 # ── 梗库检索 ─────────────────────────────────────────────────
@@ -90,17 +101,16 @@ async def list_scout_raw_videos(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> dict:
-    conn = get_conn()
-    page = get_scout_raw_videos_page(
-        conn,
-        candidate_status=candidate_status,
-        partition=partition,
-        keyword=keyword,
-        limit=limit,
-        offset=offset,
+    return _run_with_conn(
+        lambda conn: get_scout_raw_videos_page(
+            conn,
+            candidate_status=candidate_status,
+            partition=partition,
+            keyword=keyword,
+            limit=limit,
+            offset=offset,
+        )
     )
-    conn.close()
-    return page
 
 
 @router.get("/scout/raw-videos/{bvid}", summary="获取单个 Scout 原始视频快照详情")
@@ -108,9 +118,9 @@ async def get_scout_raw_video_detail(
     bvid: str,
     collected_date: date = Query(..., description="采集日期，格式 YYYY-MM-DD"),
 ) -> dict:
-    conn = get_conn()
-    snapshot = get_scout_raw_video(conn, bvid=bvid, collected_date=collected_date)
-    conn.close()
+    snapshot = _run_with_conn(
+        lambda conn: get_scout_raw_video(conn, bvid=bvid, collected_date=collected_date)
+    )
     if not snapshot:
         raise HTTPException(status_code=404, detail=f"原始快照 '{bvid}@{collected_date}' 不存在")
     return snapshot
@@ -128,26 +138,23 @@ async def list_miner_comment_insights(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> dict:
-    conn = get_conn()
-    page = get_miner_comment_insights_page(
-        conn,
-        status=status,
-        keyword=keyword,
-        bvid=bvid,
-        only_meme_candidates=only_meme_candidates,
-        only_insider_knowledge=only_insider_knowledge,
-        limit=limit,
-        offset=offset,
+    return _run_with_conn(
+        lambda conn: get_miner_comment_insights_page(
+            conn,
+            status=status,
+            keyword=keyword,
+            bvid=bvid,
+            only_meme_candidates=only_meme_candidates,
+            only_insider_knowledge=only_insider_knowledge,
+            limit=limit,
+            offset=offset,
+        )
     )
-    conn.close()
-    return page
 
 
 @router.get("/miner/comment-insights/{insight_id}", summary="获取单条 Miner 评论线索详情")
 async def get_miner_comment_insight_detail(insight_id: str) -> dict:
-    conn = get_conn()
-    insight = get_miner_comment_insight(conn, insight_id)
-    conn.close()
+    insight = _run_with_conn(lambda conn: get_miner_comment_insight(conn, insight_id))
     if not insight:
         raise HTTPException(status_code=404, detail=f"评论线索 '{insight_id}' 不存在")
     return insight
@@ -155,9 +162,7 @@ async def get_miner_comment_insight_detail(insight_id: str) -> dict:
 
 @router.get("/media-assets/{asset_id}", summary="获取媒体资产元数据")
 async def get_media_asset_detail(asset_id: str) -> dict:
-    conn = get_conn()
-    asset = get_media_asset(conn, asset_id)
-    conn.close()
+    asset = _run_with_conn(lambda conn: get_media_asset(conn, asset_id))
     if not asset:
         raise HTTPException(status_code=404, detail=f"媒体资产 '{asset_id}' 不存在")
     return asset
@@ -165,9 +170,7 @@ async def get_media_asset_detail(asset_id: str) -> dict:
 
 @router.get("/media-assets/{asset_id}/content", summary="读取媒体资产文件")
 async def get_media_asset_content(asset_id: str) -> FileResponse:
-    conn = get_conn()
-    asset = get_media_asset(conn, asset_id)
-    conn.close()
+    asset = _run_with_conn(lambda conn: get_media_asset(conn, asset_id))
     if not asset:
         raise HTTPException(status_code=404, detail=f"媒体资产 '{asset_id}' 不存在")
     storage_path = asset.get("storage_path") or ""
@@ -189,10 +192,7 @@ async def list_candidates(
     ),
     limit: int = Query(50, ge=1, le=200),
 ) -> list[dict]:
-    conn = get_conn()
-    candidates = get_candidates(conn, status=status, limit=limit)
-    conn.close()
-    return candidates
+    return _run_with_conn(lambda conn: get_candidates(conn, status=status, limit=limit))
 
 
 @router.get("/candidates/page", summary="分页获取候选梗完整信息")
@@ -204,10 +204,9 @@ async def list_candidates_page(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> dict:
-    conn = get_conn()
-    page = get_candidates_page(conn, status=status, limit=limit, offset=offset)
-    conn.close()
-    return page
+    return _run_with_conn(
+        lambda conn: get_candidates_page(conn, status=status, limit=limit, offset=offset)
+    )
 
 
 @router.get("/candidates/{word}/sources", summary="获取候选梗来源线索")
@@ -215,9 +214,9 @@ async def get_candidate_sources(
     word: str,
     limit: int = Query(100, ge=1, le=300),
 ) -> dict:
-    conn = get_conn()
-    result = get_candidate_source_insights(conn, word=word, limit=limit)
-    conn.close()
+    result = _run_with_conn(
+        lambda conn: get_candidate_source_insights(conn, word=word, limit=limit)
+    )
     if not result:
         raise HTTPException(status_code=404, detail=f"候选词 '{word}' 不存在")
     return result
@@ -225,9 +224,7 @@ async def get_candidate_sources(
 
 @router.delete("/candidates", summary="删除所有候选梗")
 async def remove_all_candidates() -> dict:
-    conn = get_conn()
-    deleted_count = delete_all_candidates(conn)
-    conn.close()
+    deleted_count = _run_with_conn(delete_all_candidates)
     return {"deleted_count": deleted_count}
 
 
@@ -238,9 +235,9 @@ async def verify_candidate(
 ) -> dict:
     if action not in ("accept", "reject"):
         raise HTTPException(status_code=400, detail="action 必须为 accept 或 reject")
-    conn = get_conn()
-    update_candidate_status(conn, word, "accepted" if action == "accept" else "rejected")
-    conn.close()
+    _run_with_conn(
+        lambda conn: update_candidate_status(conn, word, "accepted" if action == "accept" else "rejected")
+    )
     return {"word": word, "status": action + "ed"}
 
 
@@ -260,17 +257,14 @@ async def list_runs(
     status: str | None = Query(None, description="运行状态：running / success / failed"),
     limit: int = Query(50, ge=1, le=200),
 ) -> list[dict]:
-    conn = get_conn()
-    runs = list_pipeline_runs(conn, job_name=job_name, status=status, limit=limit)
-    conn.close()
-    return runs
+    return _run_with_conn(
+        lambda conn: list_pipeline_runs(conn, job_name=job_name, status=status, limit=limit)
+    )
 
 
 @router.get("/runs/{run_id}", summary="获取单次任务运行详情")
 async def get_run_detail(run_id: str) -> dict:
-    conn = get_conn()
-    run = get_pipeline_run(conn, run_id)
-    conn.close()
+    run = _run_with_conn(lambda conn: get_pipeline_run(conn, run_id))
     if not run:
         raise HTTPException(status_code=404, detail=f"运行记录 '{run_id}' 不存在")
     return run
@@ -278,7 +272,36 @@ async def get_run_detail(run_id: str) -> dict:
 
 @router.get("/jobs", summary="获取调度任务概览")
 async def list_jobs() -> list[dict]:
-    return get_scheduler_jobs()
+    runtime_states = get_all_job_runtime_states()
+    job_name_by_scheduler_id = {
+        "daily_scout": "scout",
+        "daily_miner": "miner",
+        "weekly_research": "research",
+    }
+    jobs = []
+    for job in get_scheduler_jobs():
+        mapped_job_name = job_name_by_scheduler_id.get(job.get("id", ""))
+        runtime_state = runtime_states.get(mapped_job_name or "", {})
+        jobs.append(
+            {
+                **job,
+                "job_name": mapped_job_name,
+                "is_running": bool(runtime_state.get("running")),
+                "active_trigger_mode": runtime_state.get("trigger_mode"),
+                "active_started_at": runtime_state.get("started_at"),
+                "last_finished_at": runtime_state.get("last_finished_at"),
+                "last_error": runtime_state.get("last_error", ""),
+            }
+        )
+    return jobs
+
+
+@router.post("/jobs/{job_name}/run", summary="手动触发任务")
+async def trigger_job(job_name: str) -> dict:
+    normalized_job_name = job_name.strip().lower()
+    if normalized_job_name not in JOB_NAMES:
+        raise HTTPException(status_code=404, detail=f"未知任务 '{job_name}'")
+    return await start_background_job(normalized_job_name, trigger_mode="manual")
 
 
 @router.get("/agent-conversations", summary="分页获取 Agent 对话记录")
@@ -290,25 +313,22 @@ async def list_conversations(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> dict:
-    conn = get_conn()
-    result = list_agent_conversations(
-        conn,
-        run_id=run_id,
-        agent_name=agent_name,
-        word=word,
-        status=status,
-        limit=limit,
-        offset=offset,
+    return _run_with_conn(
+        lambda conn: list_agent_conversations(
+            conn,
+            run_id=run_id,
+            agent_name=agent_name,
+            word=word,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
     )
-    conn.close()
-    return result
 
 
 @router.get("/agent-conversations/{conversation_id}", summary="获取 Agent 对话详情")
 async def get_conversation_detail(conversation_id: str) -> dict:
-    conn = get_conn()
-    conversation = get_agent_conversation(conn, conversation_id)
-    conn.close()
+    conversation = _run_with_conn(lambda conn: get_agent_conversation(conn, conversation_id))
     if not conversation:
         raise HTTPException(status_code=404, detail=f"对话记录 '{conversation_id}' 不存在")
     return conversation
@@ -318,18 +338,18 @@ async def get_conversation_detail(conversation_id: str) -> dict:
 
 @router.get("/stats", summary="统计概览")
 async def stats() -> dict:
-    conn = get_conn()
-    rows = conn.execute(
-        """
-        SELECT
-            COUNT(*) FILTER (WHERE status='pending')   AS pending,
-            COUNT(*) FILTER (WHERE status='accepted')  AS accepted,
-            COUNT(*) FILTER (WHERE status='rejected')  AS rejected,
-            COUNT(*)                                    AS total
-        FROM candidates
-        """
-    ).fetchone()
-    conn.close()
+    rows = _run_with_conn(
+        lambda conn: conn.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE status='pending')   AS pending,
+                COUNT(*) FILTER (WHERE status='accepted')  AS accepted,
+                COUNT(*) FILTER (WHERE status='rejected')  AS rejected,
+                COUNT(*)                                    AS total
+            FROM candidates
+            """
+        ).fetchone()
+    )
 
     word_count_result = await search_memes("", limit=0)
     return {

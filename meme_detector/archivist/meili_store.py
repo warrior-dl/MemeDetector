@@ -4,11 +4,16 @@ Meilisearch 存储层：管理梗库的写入与检索。
 
 from __future__ import annotations
 
+import hashlib
+import re
+
 import meilisearch
 from meilisearch.errors import MeilisearchApiError
 
 from meme_detector.config import settings
 from meme_detector.researcher.models import MemeRecord
+
+_MEILI_SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def get_client() -> meilisearch.Client:
@@ -42,17 +47,79 @@ def ensure_index() -> None:
     )
 
 
+def clear_index() -> tuple[bool, str]:
+    """清空梗库索引。"""
+    client = get_client()
+    index_name = settings.meili_index_name
+    try:
+        client.delete_index(index_name)
+        return True, f"deleted index '{index_name}'"
+    except MeilisearchApiError as exc:
+        message = str(exc)
+        lowered = message.lower()
+        if "not found" in lowered or "index_not_found" in lowered:
+            return True, f"index '{index_name}' already empty"
+        return False, message
+
+
+def make_meme_document_id(value: str) -> str:
+    normalized = str(value).strip()
+    if normalized and _MEILI_SAFE_ID_PATTERN.fullmatch(normalized):
+        return normalized
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()
+    return f"meme_{digest}"
+
+
+def _normalize_document_output(doc: dict | None) -> dict | None:
+    if not isinstance(doc, dict):
+        return doc
+    normalized = dict(doc)
+    source_word = str(normalized.get("source_word", "")).strip()
+    if source_word:
+        normalized["meili_doc_id"] = normalized.get("id")
+        normalized["id"] = source_word
+    return normalized
+
+
+def _extract_task_uid(task) -> int | None:
+    if isinstance(task, dict):
+        uid = task.get("taskUid", task.get("uid"))
+        return int(uid) if uid is not None else None
+    uid = getattr(task, "task_uid", None)
+    if uid is None:
+        uid = getattr(task, "uid", None)
+    return int(uid) if uid is not None else None
+
+
+def _wait_for_task_or_raise(client: meilisearch.Client, task) -> None:
+    task_uid = _extract_task_uid(task)
+    if task_uid is None:
+        raise RuntimeError(f"Meilisearch 未返回 task uid: {task!r}")
+    result = client.wait_for_task(task_uid, timeout_in_ms=10_000, interval_in_ms=100)
+    status = getattr(result, "status", None)
+    error = getattr(result, "error", None)
+    if status == "failed":
+        raise RuntimeError(f"Meilisearch 写入失败: {error}")
+
+
+def _build_meili_document(record: MemeRecord) -> dict:
+    doc = record.model_dump()
+    doc["source_word"] = str(doc["id"])
+    doc["id"] = make_meme_document_id(str(doc["id"]))
+    doc["first_detected_at"] = str(doc["first_detected_at"])
+    doc["updated_at"] = str(doc["updated_at"])
+    return doc
+
+
 async def upsert_meme(record: MemeRecord) -> None:
     """写入或更新一条梗记录。"""
+    ensure_index()
     client = get_client()
     index = client.index(settings.meili_index_name)
 
-    doc = record.model_dump()
-    # date 对象转字符串
-    doc["first_detected_at"] = str(doc["first_detected_at"])
-    doc["updated_at"] = str(doc["updated_at"])
-
-    index.add_documents([doc])
+    doc = _build_meili_document(record)
+    task = index.add_documents([doc])
+    _wait_for_task_or_raise(client, task)
 
 
 async def search_memes(
@@ -72,7 +139,14 @@ async def search_memes(
     if sort:
         params["sort"] = sort
 
-    return index.search(query, params)
+    result = index.search(query, params)
+    hits = result.get("hits", [])
+    if isinstance(hits, list):
+        result["hits"] = [
+            _normalize_document_output(hit)
+            for hit in hits
+        ]
+    return result
 
 
 async def get_meme(meme_id: str) -> dict | None:
@@ -80,9 +154,22 @@ async def get_meme(meme_id: str) -> dict | None:
     client = get_client()
     index = client.index(settings.meili_index_name)
     try:
-        return index.get_document(meme_id)
+        record = index.get_document(meme_id)
     except MeilisearchApiError:
-        return None
+        derived_id = make_meme_document_id(meme_id)
+        if derived_id == meme_id:
+            return None
+        try:
+            record = index.get_document(derived_id)
+        except MeilisearchApiError:
+            return None
+    if hasattr(record, "model_dump"):
+        return _normalize_document_output(record.model_dump())
+    if hasattr(record, "__dict__"):
+        return _normalize_document_output(dict(record.__dict__))
+    if isinstance(record, dict):
+        return _normalize_document_output(record)
+    return None
 
 
 async def update_human_verified(meme_id: str, verified: bool) -> bool:
@@ -90,7 +177,11 @@ async def update_human_verified(meme_id: str, verified: bool) -> bool:
     client = get_client()
     index = client.index(settings.meili_index_name)
     try:
-        index.update_documents([{"id": meme_id, "human_verified": verified}])
+        doc_id = make_meme_document_id(meme_id)
+        task = index.update_documents([{"id": doc_id, "human_verified": verified}])
+        _wait_for_task_or_raise(client, task)
         return True
     except MeilisearchApiError:
+        return False
+    except RuntimeError:
         return False

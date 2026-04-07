@@ -51,9 +51,8 @@ python -m meme_detector research
         └─▶ 读取 candidates（status=pending）
     └─▶ Step1: DeepSeek 批量快筛
         └─▶ Step2: 主流程预取视频背景 + Agent 深度分析（仅高置信度）
-            ├─▶ bilibili_search 搜索补充相关视频
-            ├─▶ web_search_summary 先拿总结版外部搜索上下文
-            ├─▶ web_search 仅在总结不足时补普通网页结果
+            ├─▶ volcengine_web_search_summary 先拿火山引擎总结版外部搜索上下文
+            ├─▶ volcengine_web_search 仅在总结不足时补火山引擎普通网页结果
             ├─▶ Agent 对话上下文写入 DuckDB agent_conversations
             └─▶ Step3: URL 真实性验证
                 └─▶ Meilisearch 写入 MemeRecord

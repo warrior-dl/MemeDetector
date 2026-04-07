@@ -39,7 +39,7 @@ class _FakeAsyncClient:
 
 
 @pytest.mark.asyncio
-async def test_web_search_uses_volcengine_api_key(monkeypatch):
+async def test_volcengine_web_search_uses_volcengine_api_key(monkeypatch):
     recorder: list[dict] = []
     payload = {
         "Result": {
@@ -64,7 +64,7 @@ async def test_web_search_uses_volcengine_api_key(monkeypatch):
         lambda **kwargs: _FakeAsyncClient(recorder, payload, **kwargs),
     )
 
-    results = await tools.web_search("依托答辩 梗 来源", num_results=3)
+    results = await tools.volcengine_web_search("依托答辩 梗 来源", num_results=3)
 
     assert results == [
         {
@@ -83,7 +83,7 @@ async def test_web_search_uses_volcengine_api_key(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_web_search_summary_uses_summary_mode(monkeypatch):
+async def test_volcengine_web_search_summary_uses_summary_mode(monkeypatch):
     recorder: list[dict] = []
     payload = {
         "Result": {
@@ -110,7 +110,7 @@ async def test_web_search_summary_uses_summary_mode(monkeypatch):
         lambda **kwargs: _FakeAsyncClient(recorder, payload, **kwargs),
     )
 
-    result = await tools.web_search_summary("依托答辩 梗 来源", num_results=3)
+    result = await tools.volcengine_web_search_summary("依托答辩 梗 来源", num_results=3)
 
     assert result == {
         "summary": "词条摘要",
@@ -131,7 +131,7 @@ async def test_web_search_summary_uses_summary_mode(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_web_search_summary_supports_flat_result_payload(monkeypatch):
+async def test_volcengine_web_search_summary_supports_flat_result_payload(monkeypatch):
     recorder: list[dict] = []
     payload = {
         "Title": "北京攻略",
@@ -152,7 +152,7 @@ async def test_web_search_summary_supports_flat_result_payload(monkeypatch):
         lambda **kwargs: _FakeAsyncClient(recorder, payload, **kwargs),
     )
 
-    result = await tools.web_search_summary("北京最新游玩攻略", num_results=2)
+    result = await tools.volcengine_web_search_summary("北京最新游玩攻略", num_results=2)
 
     assert result == {
         "summary": "北京五日游总结",
@@ -172,10 +172,10 @@ async def test_web_search_summary_supports_flat_result_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_web_search_returns_error_without_credentials(monkeypatch):
+async def test_volcengine_web_search_returns_error_without_credentials(monkeypatch):
     monkeypatch.setattr("meme_detector.researcher.tools.settings.web_search_api_key", "")
 
-    results = await tools.web_search("依托答辩")
+    results = await tools.volcengine_web_search("依托答辩")
 
     assert results == [
         {
@@ -183,5 +183,5 @@ async def test_web_search_returns_error_without_credentials(monkeypatch):
         }
     ]
 
-    summary = await tools.web_search_summary("依托答辩")
+    summary = await tools.volcengine_web_search_summary("依托答辩")
     assert summary == {"error": "WEB_SEARCH_API_KEY 未配置，跳过 Web 搜索"}

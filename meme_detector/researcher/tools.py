@@ -1,5 +1,5 @@
 """
-AI Agent 工具函数：B站搜索、Web搜索、URL验证。
+AI Agent 工具函数：火山引擎联网搜索、URL 验证。
 """
 
 from __future__ import annotations
@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 
 import httpx
-from bilibili_api import search
 
 from meme_detector.config import settings
 
@@ -133,38 +132,7 @@ async def _call_volcengine_search(query: str, num_results: int, search_type: str
         return {"payload": resp.json(), "count": count}
 
 
-async def bilibili_search(keyword: str, limit: int = 5) -> list[dict]:
-    """
-    搜索 B 站视频，返回相关视频的标题和描述。
-    供 AI Agent 用于溯源。
-    """
-    try:
-        result = await search.search_by_type(
-            keyword=keyword,
-            search_type=search.SearchObjectType.VIDEO,
-            page=1,
-        )
-        videos = result.get("result", [])[:limit]
-        return [
-            {
-                "title": (
-                    v.get("title", "")
-                    .replace("<em class=\"keyword\">", "")
-                    .replace("</em>", "")
-                ),
-                "bvid": v.get("bvid", ""),
-                "url": f'https://www.bilibili.com/video/{v.get("bvid", "")}',
-                "description": v.get("description", "")[:200],
-                "play": v.get("play", 0),
-                "pubdate": v.get("pubdate", 0),
-            }
-            for v in videos
-        ]
-    except Exception as e:
-        return [{"error": str(e)}]
-
-
-async def web_search(query: str, num_results: int = 5) -> list[dict]:
+async def volcengine_web_search(query: str, num_results: int = 5) -> list[dict]:
     """
     使用火山引擎联网搜索，获取梗的外部背景信息。
     """
@@ -177,7 +145,7 @@ async def web_search(query: str, num_results: int = 5) -> list[dict]:
         return [{"error": str(e)}]
 
 
-async def web_search_summary(query: str, num_results: int = 5) -> dict:
+async def volcengine_web_search_summary(query: str, num_results: int = 5) -> dict:
     """
     使用火山引擎总结版联网搜索，优先获取 AI 总结和相关来源。
     """

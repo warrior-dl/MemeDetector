@@ -21,10 +21,16 @@
       <div>
         <p class="eyebrow">Operations Console</p>
         <h1>MemeDetector 控制台</h1>
-        <p class="hero-copy">查看 Scout 原始快照、Miner 评论线索、候选梗队列与入库结果。</p>
+        <p class="hero-copy">查看 Scout 原始快照、Miner 评论线索、候选梗队列与入库结果，并在当前服务进程内手动触发任务。</p>
       </div>
       <div class="hero-actions">
         <button id="refreshButton" class="primary-button" type="button">刷新数据</button>
+        <div class="toolbar-actions">
+          <button id="runScoutButton" class="secondary-button" type="button">运行 Scout</button>
+          <button id="runMinerButton" class="secondary-button" type="button">运行 Miner</button>
+          <button id="runResearchButton" class="secondary-button" type="button">运行 Research</button>
+        </div>
+        <p id="jobActionFeedback" class="meta-text">手动任务会在当前 serve 进程后台执行，避免 DuckDB 跨进程锁冲突。</p>
         <p id="lastUpdated" class="meta-text">最近刷新：--</p>
       </div>
     </header>
@@ -107,15 +113,15 @@
           <table>
             <thead>
               <tr>
-                <th>标题</th>
-                <th>分区</th>
-                <th>评论数</th>
-                <th>状态</th>
-              </tr>
-            </thead>
-            <tbody id="rawVideoRows"></tbody>
-          </table>
-        </div>
+              <th>标题</th>
+              <th>分区</th>
+              <th>评论数</th>
+              <th>阶段</th>
+            </tr>
+          </thead>
+          <tbody id="rawVideoRows"></tbody>
+        </table>
+      </div>
       </section>
 
       <section class="panel">

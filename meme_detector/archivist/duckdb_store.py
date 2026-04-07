@@ -1100,6 +1100,8 @@ def get_scout_raw_videos_page(
             video_url,
             tags_json,
             comment_count,
+            miner_status,
+            miner_processed_at,
             candidate_status,
             candidate_extracted_at,
             created_at,
@@ -1147,6 +1149,8 @@ def get_scout_raw_video(
             tags_json,
             comments_json,
             comment_count,
+            miner_status,
+            miner_processed_at,
             candidate_status,
             candidate_extracted_at,
             created_at,
@@ -1774,6 +1778,68 @@ def update_candidate_context(
     )
 
 
+def upsert_meme_record(
+    conn: duckdb.DuckDBPyConnection,
+    record: "MemeRecord",
+) -> None:
+    from meme_detector.researcher.models import MemeRecord
+
+    if not isinstance(record, MemeRecord):
+        record = MemeRecord.model_validate(record)
+
+    conn.execute(
+        """
+        INSERT INTO meme_records (
+            id,
+            title,
+            alias,
+            definition,
+            origin,
+            category,
+            platform,
+            heat_index,
+            lifecycle_stage,
+            first_detected,
+            source_urls,
+            confidence,
+            human_verified,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE
+        SET title = excluded.title,
+            alias = excluded.alias,
+            definition = excluded.definition,
+            origin = excluded.origin,
+            category = excluded.category,
+            platform = excluded.platform,
+            heat_index = excluded.heat_index,
+            lifecycle_stage = excluded.lifecycle_stage,
+            first_detected = excluded.first_detected,
+            source_urls = excluded.source_urls,
+            confidence = excluded.confidence,
+            human_verified = excluded.human_verified,
+            updated_at = excluded.updated_at
+        """,
+        [
+            record.id,
+            record.title,
+            json.dumps(record.alias, ensure_ascii=False),
+            record.definition,
+            record.origin,
+            json.dumps(record.category, ensure_ascii=False),
+            record.platform,
+            record.heat_index,
+            record.lifecycle_stage,
+            record.first_detected_at,
+            json.dumps(record.source_urls, ensure_ascii=False),
+            record.confidence_score,
+            record.human_verified,
+            record.updated_at,
+        ],
+    )
+
+
 def delete_all_candidates(conn: duckdb.DuckDBPyConnection) -> int:
     """删除全部候选梗。"""
     deleted_count = conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0]
@@ -2310,11 +2376,17 @@ def _serialize_scout_raw_video(row: tuple) -> dict:
         "tags": [str(tag).strip() for tag in tags if str(tag).strip()],
         "comments": [str(comment) for comment in comments if str(comment).strip()],
         "comment_count": row[8],
-        "candidate_status": row[9],
-        "candidate_extracted_at": row[10],
-        "created_at": row[11],
-        "updated_at": row[12],
-        "picture_count": row[13],
+        "miner_status": row[9],
+        "miner_processed_at": row[10],
+        "candidate_status": row[11],
+        "candidate_extracted_at": row[12],
+        "created_at": row[13],
+        "updated_at": row[14],
+        "picture_count": row[15],
+        "pipeline_stage": _build_scout_pipeline_stage(
+            miner_status=row[9],
+            candidate_status=row[11],
+        ),
     }
 
 
@@ -2323,7 +2395,7 @@ def _serialize_scout_raw_video_summary(row: tuple) -> dict:
     if not isinstance(tags, list):
         tags = []
 
-    comments = _load_json_text(row[11], default=[])
+    comments = _load_json_text(row[13], default=[])
     if not isinstance(comments, list):
         comments = []
 
@@ -2339,13 +2411,27 @@ def _serialize_scout_raw_video_summary(row: tuple) -> dict:
         "video_url": row[4],
         "tags": [str(tag).strip() for tag in tags if str(tag).strip()],
         "comment_count": row[6],
-        "candidate_status": row[7],
-        "candidate_extracted_at": row[8],
-        "created_at": row[9],
-        "updated_at": row[10],
+        "miner_status": row[7],
+        "miner_processed_at": row[8],
+        "candidate_status": row[9],
+        "candidate_extracted_at": row[10],
+        "created_at": row[11],
+        "updated_at": row[12],
         "first_comment": first_comment,
-        "picture_count": row[12],
+        "picture_count": row[14],
+        "pipeline_stage": _build_scout_pipeline_stage(
+            miner_status=row[7],
+            candidate_status=row[9],
+        ),
     }
+
+
+def _build_scout_pipeline_stage(*, miner_status: str, candidate_status: str) -> str:
+    if candidate_status == "processed":
+        return "researched"
+    if miner_status == "processed":
+        return "mined"
+    return "scouted"
 
 
 def _serialize_miner_comment_insight(row: tuple) -> dict:

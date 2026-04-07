@@ -39,6 +39,23 @@ python -m meme_detector serve
 # 访问 http://localhost:8000/admin/miner 查看 Miner 评论线索调试页
 # 访问 http://localhost:8000/admin/candidates 查看候选梗分页管理页
 # 访问 http://localhost:8000/admin/conversations 查看 Agent 对话记录页
+
+# 如果 serve 已在运行，优先通过 /admin 总览页按钮手动触发 Scout / Miner / Research
+# 避免另起 CLI 进程写 DuckDB 时产生跨进程文件锁冲突
+```
+
+### 日志
+
+默认会同时输出：
+
+- 控制台 Rich 日志
+- JSONL 文件日志：`logs/app.jsonl`
+
+本地排查推荐：
+
+```bash
+tail -f logs/app.jsonl
+rg 'research_candidate_failed|pipeline_run_failed|run_id' logs/app.jsonl
 ```
 
 ### 生产部署（全容器化）

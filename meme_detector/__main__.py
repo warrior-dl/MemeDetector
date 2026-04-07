@@ -5,6 +5,7 @@ meme_detector 包主入口。
   python -m meme_detector scout   # 手动触发单次采集
   python -m meme_detector miner    # 手动触发评论挖掘
   python -m meme_detector research # 手动触发 AI 分析
+  python -m meme_detector reset    # 清空测试数据
 """
 
 import asyncio
@@ -12,10 +13,14 @@ import sys
 
 from rich.console import Console
 
+from meme_detector.logging_utils import get_logger, setup_logging
+
 console = Console()
+logger = get_logger(__name__)
 
 
 def main() -> None:
+    setup_logging()
     cmd = sys.argv[1] if len(sys.argv) > 1 else "serve"
 
     if cmd == "serve":
@@ -26,9 +31,12 @@ def main() -> None:
         asyncio.run(_miner())
     elif cmd == "research":
         asyncio.run(_research())
+    elif cmd == "reset":
+        _reset()
     else:
+        logger.warning("unknown command", extra={"event": "unknown_command", "command": cmd})
         console.print(f"[red]未知命令: {cmd}[/red]")
-        console.print("用法: python -m meme_detector [serve|scout|miner|research]")
+        console.print("用法: python -m meme_detector [serve|scout|miner|research|reset]")
         sys.exit(1)
 
 
@@ -40,28 +48,54 @@ def _serve() -> None:
 
     app = create_app()
     start_scheduler()
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    logger.info("starting api server", extra={"event": "serve_start"})
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", log_config=None)
 
 
 async def _scout() -> None:
-    from meme_detector.run_tracker import execute_tracked_job
-    from meme_detector.scout.scorer import run_scout
+    from meme_detector.pipeline_service import run_job
 
-    await execute_tracked_job("scout", run_scout, trigger_mode="manual")
+    await run_job("scout", trigger_mode="manual")
 
 
 async def _miner() -> None:
-    from meme_detector.miner.scorer import run_miner
-    from meme_detector.run_tracker import execute_tracked_job
+    from meme_detector.pipeline_service import run_job
 
-    await execute_tracked_job("miner", run_miner, trigger_mode="manual")
+    await run_job("miner", trigger_mode="manual")
 
 
 async def _research() -> None:
-    from meme_detector.researcher.agent import run_research
-    from meme_detector.run_tracker import execute_tracked_job
+    from meme_detector.pipeline_service import run_job
 
-    await execute_tracked_job("research", run_research, trigger_mode="manual")
+    await run_job("research", trigger_mode="manual")
+
+
+def _reset() -> None:
+    from meme_detector.reset_service import reset_all_data
+
+    result = reset_all_data()
+    logger.info(
+        "data reset completed",
+        extra={
+            "event": "data_reset_completed",
+            "duckdb_path": result["duckdb_path"],
+            "meili_message": result["meili_message"],
+        },
+    )
+    console.print("[bold blue]═══ 数据已清空 ═══[/bold blue]")
+    console.print(
+        f"DuckDB: {result['duckdb_path']} "
+        f"({'deleted' if result['duckdb_deleted'] else 'not found'})"
+    )
+    console.print(
+        f"Media assets: {result['media_asset_root']} "
+        f"({'cleared' if result['media_assets_deleted'] else 'already empty'})"
+    )
+    console.print(
+        f"Meilisearch: "
+        f"{'cleared' if result['meili_index_cleared'] else 'warning'} "
+        f"({result['meili_message']})"
+    )
 
 
 if __name__ == "__main__":

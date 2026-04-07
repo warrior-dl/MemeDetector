@@ -6,14 +6,18 @@
 
 | 文件 | 职责 |
 |------|------|
-| `models.py` | `CommentInsightResult` 结构化输出模型 |
+| `models.py` | `CommentInsightResult` 与 `MinerRunResult` |
 | `video_context.py` | B站视频内容解析、BibiGPT 调用与 DuckDB 缓存 |
-| `scorer.py` | Miner 主流程：批量读取 Scout 快照并写入评论线索 |
+| `analysis.py` | 评论批处理、LLM 请求、fallback、Agent 对话落库 |
+| `persistence.py` | 待处理视频读取、线索写库、按视频标记 mined |
+| `scorer.py` | Miner 编排层，逐视频处理并统计结果 |
 
 ## 触发方式
 
 - 自动：每日 03:00 由 `scheduler.py` 调用 `run_miner()`
 - 手动：`python -m meme_detector miner`
+
+如果 `serve` 正在运行，推荐在 `/admin` 中触发 Miner，而不是另开 CLI 进程，避免 DuckDB 锁冲突。
 
 ## 输入与输出
 
@@ -31,6 +35,34 @@
 - `reason`
 - `video_context`
 
+运行结果：
+
+```python
+MinerRunResult(
+    target_date="YYYY-MM-DD",
+    video_count=...,
+    insight_count=...,
+    high_value_count=...,
+)
+```
+
+## 处理流程
+
+```
+读取全部 pending 的 scout_raw_videos
+    ↓
+逐视频获取视频上下文（带 DuckDB 缓存）
+    ↓
+按评论批次调用模型打分
+    ↓
+写入 miner_comment_insights
+    ↓
+当前视频立即标记为 mined
+```
+
+Miner 现在是按视频增量落库的。
+即使中途失败，已经处理完成的视频也不会在下次重跑时重复计算。
+
 ## 关键配置
 
 | 环境变量 | 说明 |
@@ -39,3 +71,5 @@
 | `BIBIGPT_API_TOKEN` | 视频内容解析 |
 | `MINER_COMMENT_CONFIDENCE_THRESHOLD` | 进入 Researcher 的最低线索阈值 |
 | `MINER_COMMENTS_BATCH_SIZE` | 单次送模型的评论批大小 |
+| `MINER_LLM_TIMEOUT_SECONDS` | 单次模型请求超时 |
+| `MINER_LLM_MAX_RETRIES` | OpenAI 客户端级别重试次数 |

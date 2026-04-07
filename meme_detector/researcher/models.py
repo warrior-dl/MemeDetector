@@ -51,3 +51,51 @@ class CandidateSeed(BaseModel):
     reason: str = Field(description="为何值得进入候选队列")
     related_bvids: list[str] = Field(default_factory=list, description="相关视频 BV 号")
     sample_comments: list[str] = Field(default_factory=list, description="代表性评论")
+
+
+class ResearchAcceptedRecord(BaseModel):
+    """Research 成功入库后的结果摘要。"""
+
+    id: str
+    title: str
+    heat_index: int = Field(ge=0, le=100)
+    lifecycle_stage: Literal["emerging", "peak", "declining"]
+    confidence_score: float = Field(ge=0.0, le=1.0)
+
+
+class ResearchRunResult(BaseModel):
+    """Research 流程运行结果。"""
+
+    pending_count: int = 0
+    bootstrapped_count: int = 0
+    screened_count: int = 0
+    deep_analysis_count: int = 0
+    accepted_count: int = 0
+    rejected_count: int = 0
+    accepted_records: list[ResearchAcceptedRecord] = Field(default_factory=list)
+    rejected_words: list[str] = Field(default_factory=list)
+    screen_failed_words: list[str] = Field(default_factory=list)
+    failed_words: list[str] = Field(default_factory=list)
+    blocked_pending_video_count: int = 0
+
+    def __getitem__(self, key: str):
+        return getattr(self, key)
+
+    def get(self, key: str, default=None):
+        return getattr(self, key, default)
+
+    @classmethod
+    def blocked_by_pending_videos(cls, pending_video_count: int) -> "ResearchRunResult":
+        return cls(blocked_pending_video_count=pending_video_count)
+
+    def add_accepted_record(self, record: MemeRecord) -> None:
+        self.accepted_records.append(
+            ResearchAcceptedRecord(
+                id=record.id,
+                title=record.title,
+                heat_index=record.heat_index,
+                lifecycle_stage=record.lifecycle_stage,
+                confidence_score=record.confidence_score,
+            )
+        )
+        self.accepted_count = len(self.accepted_records)

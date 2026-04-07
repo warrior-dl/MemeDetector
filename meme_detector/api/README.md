@@ -68,6 +68,7 @@
 | `GET` | `/api/v1/runs` | Pipeline 运行记录列表 |
 | `GET` | `/api/v1/runs/{run_id}` | 单次运行详情 |
 | `GET` | `/api/v1/jobs` | APScheduler 任务概览 |
+| `POST` | `/api/v1/jobs/{job_name}/run` | 在当前 `serve` 进程内手动触发 Scout / Miner / Research |
 | `GET` | `/api/v1/agent-conversations` | Agent 对话分页列表 |
 | `GET` | `/api/v1/agent-conversations/{conversation_id}` | 单条 Agent 对话详情 |
 
@@ -98,5 +99,4 @@ http://localhost:8000/admin/conversations
 ## 扩展建议
 
 - 需要鉴权时，在 `app.py` 中为管理页和内部 API 添加 FastAPI `Depends`
-- 如果要支持手动触发任务，可在 `routes.py` 中增加运行控制路由
 - 如果要把 Agent 对话渲染成更友好的时间线，可在管理页前端对 `messages` JSON 做结构化展示

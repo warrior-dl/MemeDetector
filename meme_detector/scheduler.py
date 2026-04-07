@@ -15,7 +15,10 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from rich.console import Console
 
+from meme_detector.logging_utils import get_logger
+
 console = Console()
+logger = get_logger(__name__)
 _scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
 
 
@@ -58,6 +61,7 @@ def start_scheduler() -> None:
     )
 
     _scheduler.start()
+    logger.info("scheduler started", extra={"event": "scheduler_started"})
     console.print("[bold green]调度器已启动[/bold green]")
     console.print("  - 每日 02:05 → Scout")
     console.print("  - 每日 03:00 → Miner")
@@ -78,33 +82,39 @@ def get_scheduler_jobs() -> list[dict]:
 
 
 async def _scout_job(trigger_mode: str = "scheduled") -> None:
-    from meme_detector.run_tracker import execute_tracked_job
-    from meme_detector.scout.scorer import run_scout
+    from meme_detector.pipeline_service import run_job
 
     console.print("[bold]定时任务: Scout 开始[/bold]")
+    logger.info("scheduled scout started", extra={"event": "scheduled_job_started", "job_name": "scout"})
     try:
-        await execute_tracked_job("scout", run_scout, trigger_mode=trigger_mode)
+        await run_job("scout", trigger_mode=trigger_mode)
     except Exception as e:
+        logger.exception("scheduled scout failed", extra={"event": "scheduled_job_failed", "job_name": "scout"})
         console.print(f"[red]Scout 任务异常: {e}[/red]")
 
 
 async def _miner_job(trigger_mode: str = "scheduled") -> None:
-    from meme_detector.miner.scorer import run_miner
-    from meme_detector.run_tracker import execute_tracked_job
+    from meme_detector.pipeline_service import run_job
 
     console.print("[bold]定时任务: Miner 开始[/bold]")
+    logger.info("scheduled miner started", extra={"event": "scheduled_job_started", "job_name": "miner"})
     try:
-        await execute_tracked_job("miner", run_miner, trigger_mode=trigger_mode)
+        await run_job("miner", trigger_mode=trigger_mode)
     except Exception as e:
+        logger.exception("scheduled miner failed", extra={"event": "scheduled_job_failed", "job_name": "miner"})
         console.print(f"[red]Miner 任务异常: {e}[/red]")
 
 
 async def _research_job(trigger_mode: str = "scheduled") -> None:
-    from meme_detector.researcher.agent import run_research
-    from meme_detector.run_tracker import execute_tracked_job
+    from meme_detector.pipeline_service import run_job
 
     console.print("[bold]定时任务: Researcher 开始[/bold]")
+    logger.info("scheduled research started", extra={"event": "scheduled_job_started", "job_name": "research"})
     try:
-        await execute_tracked_job("research", run_research, trigger_mode=trigger_mode)
+        await run_job("research", trigger_mode=trigger_mode)
     except Exception as e:
+        logger.exception(
+            "scheduled research failed",
+            extra={"event": "scheduled_job_failed", "job_name": "research"},
+        )
         console.print(f"[red]Researcher 任务异常: {e}[/red]")

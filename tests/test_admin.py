@@ -312,6 +312,7 @@ def test_admin_page_and_runs_api(client):
     jobs_payload = jobs_resp.json()
     assert jobs_payload[0]["id"] == "daily_scout"
     assert any(item["id"] == "daily_miner" for item in jobs_payload)
+    assert all("is_running" in item for item in jobs_payload)
 
     scout_raw_resp = client.get("/api/v1/scout/raw-videos?limit=10&offset=0")
     assert scout_raw_resp.status_code == 200
@@ -320,6 +321,7 @@ def test_admin_page_and_runs_api(client):
     assert scout_raw_payload["items"][0]["bvid"].startswith("BV1raw")
     assert scout_raw_payload["items"][0]["first_comment"] != ""
     assert scout_raw_payload["items"][0]["picture_count"] >= 0
+    assert scout_raw_payload["items"][0]["pipeline_stage"] == "scouted"
 
     scout_raw_detail_resp = client.get(
         "/api/v1/scout/raw-videos/BV1raw111?collected_date=2026-03-28"
@@ -399,3 +401,34 @@ def test_admin_page_and_runs_api(client):
     conversation_detail = conversation_detail_resp.json()
     assert conversation_detail["message_count"] == 2
     assert conversation_detail["output"]["title"] == "抽象圣经"
+
+
+def test_jobs_run_endpoint(client, monkeypatch):
+    called = {}
+
+    async def fake_start_background_job(job_name: str, *, trigger_mode: str = "manual") -> dict:
+        called["job_name"] = job_name
+        called["trigger_mode"] = trigger_mode
+        return {
+            "job_name": job_name,
+            "started": True,
+            "message": f"{job_name} 已在后台启动",
+            "runtime_state": {
+                "running": True,
+                "trigger_mode": trigger_mode,
+                "started_at": None,
+                "last_started_at": None,
+                "last_finished_at": None,
+                "last_error": "",
+            },
+        }
+
+    monkeypatch.setattr("meme_detector.api.routes.start_background_job", fake_start_background_job)
+
+    response = client.post("/api/v1/jobs/miner/run")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["started"] is True
+    assert payload["job_name"] == "miner"
+    assert called == {"job_name": "miner", "trigger_mode": "manual"}
