@@ -14,11 +14,11 @@ from dataclasses import dataclass, field
 from bilibili_api import Credential, comment, rank, request_settings, video
 from bilibili_api.comment import CommentResourceType, OrderType
 from bilibili_api.rank import RankType
-from rich.console import Console
 
 from meme_detector.config import settings
+from meme_detector.logging_utils import get_logger
 
-console = Console()
+logger = get_logger(__name__)
 
 # MVP 阶段采集的目标分区 (partition_name, RankType)
 TARGET_PARTITIONS: list[tuple[str, RankType]] = [
@@ -181,15 +181,29 @@ async def _fetch_video_comments(
 
                     if not retryable or retries >= settings.scout_comment_retry_times:
                         label = "评论触发风控" if risk_control else "评论获取失败"
-                        console.print(f"[yellow]  {label} {bvid}: {e}[/yellow]")
+                        logger.warning(
+                            label,
+                            extra={
+                                "event": "scout_comment_fetch_failed",
+                                "bvid": bvid,
+                                "risk_control": risk_control,
+                                "page": page,
+                            },
+                            exc_info=e,
+                        )
                         return snapshots[:max_count]
 
-                    console.print(
-                        "[yellow]"
-                        f"  评论请求重试 {bvid} 第 {page} 页 "
-                        f"({retries + 1}/{settings.scout_comment_retry_times})，"
-                        f"{delay:.1f}s 后继续: {e}"
-                        "[/yellow]"
+                    logger.warning(
+                        "scout comment request retrying",
+                        extra={
+                            "event": "scout_comment_retrying",
+                            "bvid": bvid,
+                            "page": page,
+                            "retry_index": retries + 1,
+                            "retry_limit": settings.scout_comment_retry_times,
+                            "retry_delay_seconds": round(delay, 1),
+                            "risk_control": risk_control,
+                        },
                     )
                     retries += 1
                     await asyncio.sleep(delay)
@@ -228,7 +242,11 @@ async def _fetch_video_comments(
             await _random_delay()
         risk_state.note_success()
     except Exception as e:
-        console.print(f"[yellow]  评论获取失败 {bvid}: {e}[/yellow]")
+        logger.warning(
+            "scout comment fetch failed",
+            extra={"event": "scout_comment_fetch_failed", "bvid": bvid},
+            exc_info=e,
+        )
     return snapshots[:max_count]
 
 
@@ -247,14 +265,24 @@ async def _fetch_partition_top_videos(
         rank_result = await rank.get_rank(type_=rank_type)
         video_items = rank_result["list"][:top_n]
     except Exception as e:
-        console.print(f"[red]获取分区 {partition_name} 排行榜失败: {e}[/red]")
+        logger.error(
+            "failed to fetch partition rank",
+            extra={"event": "scout_partition_rank_failed", "partition_name": partition_name},
+            exc_info=e,
+        )
         return []
 
-    console.print(f"[cyan]  分区 [{partition_name}] 共 {len(video_items)} 个视频[/cyan]")
+    logger.info(
+        "scout partition rank fetched",
+        extra={
+            "event": "scout_partition_rank_fetched",
+            "partition_name": partition_name,
+            "video_count": len(video_items),
+        },
+    )
 
     for i, item in enumerate(video_items, 1):
         bvid = item.get("bvid", "")
-        console.print(f"  [{i}/{len(video_items)}] {bvid} ...", end=" ")
         try:
             comments: list[str] = []
             tags: list[str] = []
@@ -268,14 +296,20 @@ async def _fetch_partition_top_videos(
                     if isinstance(tag, dict) and str(tag.get("tag_name", "")).strip()
                 ]
             except Exception as e:
-                console.print(f"[yellow]标签获取失败 {bvid}: {e}[/yellow]", end=" ")
+                logger.warning(
+                    "scout tag fetch failed",
+                    extra={"event": "scout_tag_fetch_failed", "bvid": bvid, "partition_name": partition_name},
+                    exc_info=e,
+                )
             if risk_state.should_skip_comments():
-                console.print(
-                    "[yellow]"
-                    f"评论接口冷却中，跳过，剩余 "
-                    f"{risk_state.remaining_cooldown():.1f}s。"
-                    "[/yellow]",
-                    end=" ",
+                logger.warning(
+                    "scout comments skipped due to cooldown",
+                    extra={
+                        "event": "scout_comment_cooldown_skip",
+                        "bvid": bvid,
+                        "partition_name": partition_name,
+                        "remaining_cooldown_seconds": round(risk_state.remaining_cooldown(), 1),
+                    },
                 )
             else:
                 comment_snapshots = await _fetch_video_comments(
@@ -301,9 +335,30 @@ async def _fetch_partition_top_videos(
                     comment_snapshots=comment_snapshots,
                 )
             )
-            console.print(f"[green]评论 {len(comments)} 条，标签 {len(tags)} 个[/green]")
+            logger.info(
+                "scout video collected",
+                extra={
+                    "event": "scout_video_collected",
+                    "bvid": bvid,
+                    "partition_name": partition_name,
+                    "video_index": i,
+                    "video_total": len(video_items),
+                    "comment_count": len(comments),
+                    "tag_count": len(tags),
+                },
+            )
         except Exception as e:
-            console.print(f"[red]失败: {e}[/red]")
+            logger.error(
+                "scout video collection failed",
+                extra={
+                    "event": "scout_video_collection_failed",
+                    "bvid": bvid,
+                    "partition_name": partition_name,
+                    "video_index": i,
+                    "video_total": len(video_items),
+                },
+                exc_info=e,
+            )
         await _random_delay()
 
     return results
@@ -329,13 +384,22 @@ async def collect_all_partitions(
     # 配置代理（如果有）
     if settings.scout_proxy_url:
         request_settings.set_proxy(settings.scout_proxy_url)
-        console.print(f"[cyan]已启用代理: {settings.scout_proxy_url}[/cyan]")
+        logger.info(
+            "scout proxy enabled",
+            extra={"event": "scout_proxy_enabled", "proxy_url": settings.scout_proxy_url},
+        )
     elif credential is None:
-        console.print("[yellow]未配置 B站 Cookie，评论接口更容易触发风控。[/yellow]")
+        logger.warning(
+            "bilibili cookie not configured; comment API may trigger risk control more easily",
+            extra={"event": "scout_cookie_not_configured"},
+        )
 
     result: dict[str, list[VideoTexts]] = {}
     for partition_name, rank_type in partitions:
-        console.print(f"\n[bold]正在采集分区: {partition_name}[/bold]")
+        logger.info(
+            "scout partition collection started",
+            extra={"event": "scout_partition_collection_started", "partition_name": partition_name},
+        )
         videos = await _fetch_partition_top_videos(
             rank_type=rank_type,
             partition_name=partition_name,

@@ -269,33 +269,23 @@ def test_admin_page_and_runs_api(client):
     )
     conn.close()
 
-    admin_page = client.get("/admin")
-    assert admin_page.status_code == 200
-    assert "MemeDetector 控制台" in admin_page.text
-    assert "/admin/scout" in admin_page.text
-    assert "/admin/miner" in admin_page.text
-    assert "/admin/candidates" in admin_page.text
-    assert "/admin/conversations" in admin_page.text
+    root_page = client.get("/")
+    assert root_page.status_code == 200
+    assert "MemeDetector Workbench" in root_page.text
 
-    scout_page = client.get("/admin/scout")
-    assert scout_page.status_code == 200
-    assert "Scout 原始数据" in scout_page.text
+    legacy_workbench = client.get("/workbench", follow_redirects=False)
+    assert legacy_workbench.status_code == 307
+    assert legacy_workbench.headers["location"] == "/"
 
-    miner_page = client.get("/admin/miner")
-    assert miner_page.status_code == 200
-    assert "Miner 评论线索" in miner_page.text
+    legacy_workbench_candidates = client.get("/workbench/candidates", follow_redirects=False)
+    assert legacy_workbench_candidates.status_code == 307
+    assert legacy_workbench_candidates.headers["location"] == "/candidates"
 
-    candidates_page = client.get("/admin/candidates")
-    assert candidates_page.status_code == 200
-    assert "候选梗队列" in candidates_page.text
+    removed_admin = client.get("/admin")
+    assert removed_admin.status_code == 404
 
-    candidate_sources_page = client.get("/admin/candidate-sources?word=%E6%8A%BD%E8%B1%A1%E5%9C%A3%E7%BB%8F")
-    assert candidate_sources_page.status_code == 200
-    assert "候选梗来源线索" in candidate_sources_page.text
-
-    conversations_page = client.get("/admin/conversations")
-    assert conversations_page.status_code == 200
-    assert "Agent 对话记录" in conversations_page.text
+    removed_admin_candidates = client.get("/admin/candidates")
+    assert removed_admin_candidates.status_code == 404
 
     runs_resp = client.get("/api/v1/runs")
     assert runs_resp.status_code == 200
@@ -363,6 +353,14 @@ def test_admin_page_and_runs_api(client):
     assert payload["total"] == 2
     assert len(payload["items"]) == 1
     assert payload["items"][0]["explanation"] != ""
+
+    filtered_candidates_resp = client.get(
+        "/api/v1/candidates/page?limit=10&offset=0&status=pending&keyword=%E6%8A%BD%E8%B1%A1"
+    )
+    assert filtered_candidates_resp.status_code == 200
+    filtered_payload = filtered_candidates_resp.json()
+    assert filtered_payload["total"] == 1
+    assert filtered_payload["items"][0]["word"] == "抽象圣经"
 
     candidate_sources_resp = client.get(
         "/api/v1/candidates/%E6%8A%BD%E8%B1%A1%E5%9C%A3%E7%BB%8F/sources"

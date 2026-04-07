@@ -13,7 +13,6 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 from pydantic_ai.providers.moonshotai import MoonshotAIProvider
 from pydantic_ai.providers.openai import OpenAIProvider
-from rich.console import Console
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from meme_detector.archivist.duckdb_store import (
@@ -31,7 +30,6 @@ from meme_detector.researcher.tools import (
 )
 from meme_detector.run_tracker import get_current_run_id
 
-console = Console()
 logger = get_logger(__name__)
 
 
@@ -181,7 +179,6 @@ async def deep_analyze(
                 message_count=len(failure_messages),
                 error_message=str(exc),
             )
-        console.print(f"[red]  深度分析失败 [{word}]: {exc}[/red]")
         return None
 
 

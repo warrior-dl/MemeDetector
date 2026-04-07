@@ -128,6 +128,7 @@ async def test_volcengine_web_search_summary_uses_summary_mode(monkeypatch):
         ],
     }
     assert '"SearchType": "web_summary"' in recorder[1]["content"]
+    assert '"NeedSummary": true' in recorder[1]["content"]
 
 
 @pytest.mark.asyncio

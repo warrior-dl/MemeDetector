@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 
 from openai import AsyncOpenAI
-from rich.console import Console
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from meme_detector.archivist.duckdb_store import (
@@ -19,9 +18,10 @@ from meme_detector.archivist.duckdb_store import (
     upsert_scout_candidates,
 )
 from meme_detector.config import settings
+from meme_detector.logging_utils import get_logger
 from meme_detector.researcher.models import CandidateSeed
 
-console = Console()
+logger = get_logger(__name__)
 
 _CANDIDATE_EXTRACTION_SYSTEM = """\
 你是一位专业的中文互联网亚文化观察员。
@@ -258,10 +258,12 @@ async def bootstrap_candidates_from_miner() -> list[dict]:
 
     if not pending_insights:
         if pending_videos:
-            console.print(
-                f"[yellow]检测到 {len(pending_videos)} 个待 Miner 处理的视频；"
-                "Research 不会自动触发 Miner，请先手动运行 "
-                "`python -m meme_detector miner`[/yellow]"
+            logger.warning(
+                "research blocked by pending miner videos",
+                extra={
+                    "event": "research_blocked_by_pending_miner_videos",
+                    "video_count": len(pending_videos),
+                },
             )
         return []
 
@@ -271,9 +273,13 @@ async def bootstrap_candidates_from_miner() -> list[dict]:
         if item.get("confidence", 0.0) >= settings.miner_comment_confidence_threshold
         and (item.get("is_meme_candidate") or item.get("is_insider_knowledge"))
     ]
-    console.print(
-        f"\n[bold]Step 0: 从 {len(pending_insights)} 条 Miner 评论线索中抽取候选词，"
-        f"其中高价值 {len(high_value_insights)} 条...[/bold]"
+    logger.info(
+        "research bootstrap started",
+        extra={
+            "event": "research_bootstrap_started",
+            "insight_count": len(pending_insights),
+            "high_value_count": len(high_value_insights),
+        },
     )
     grouped_videos = group_miner_insights_by_video(high_value_insights)
     candidates = await extract_candidate_seeds(grouped_videos)
@@ -288,7 +294,13 @@ async def bootstrap_candidates_from_miner() -> list[dict]:
     mark_scout_raw_videos_processed(conn, touched_videos)
     conn.close()
 
-    console.print(f"  生成 {len(candidates)} 个候选词")
+    logger.info(
+        "research bootstrap completed",
+        extra={
+            "event": "research_bootstrap_completed",
+            "candidate_count": len(candidates),
+        },
+    )
     return candidates
 
 

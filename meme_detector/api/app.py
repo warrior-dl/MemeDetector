@@ -5,9 +5,8 @@ FastAPI 应用入口。
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, RedirectResponse
 
 from meme_detector.api.routes import router
 from meme_detector.archivist.meili_store import ensure_index
@@ -16,7 +15,8 @@ from meme_detector.logging_utils import get_logger
 logger = get_logger(__name__)
 
 def create_app() -> FastAPI:
-    static_dir = Path(__file__).resolve().parent / "static"
+    repo_root = Path(__file__).resolve().parents[2]
+    frontend_dist = repo_root / "frontend" / "dist"
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -33,31 +33,47 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    app.mount("/admin-assets", StaticFiles(directory=static_dir), name="admin-assets")
-
-    @app.get("/admin", include_in_schema=False)
-    async def admin_page() -> FileResponse:
-        return FileResponse(static_dir / "admin.html")
-
-    @app.get("/admin/candidates", include_in_schema=False)
-    async def admin_candidates_page() -> FileResponse:
-        return FileResponse(static_dir / "candidates.html")
-
-    @app.get("/admin/candidate-sources", include_in_schema=False)
-    async def admin_candidate_sources_page() -> FileResponse:
-        return FileResponse(static_dir / "candidate_sources.html")
-
-    @app.get("/admin/scout", include_in_schema=False)
-    async def admin_scout_page() -> FileResponse:
-        return FileResponse(static_dir / "scout.html")
-
-    @app.get("/admin/miner", include_in_schema=False)
-    async def admin_miner_page() -> FileResponse:
-        return FileResponse(static_dir / "miner.html")
-
-    @app.get("/admin/conversations", include_in_schema=False)
-    async def admin_conversations_page() -> FileResponse:
-        return FileResponse(static_dir / "conversations.html")
-
     app.include_router(router, prefix="/api/v1")
+
+    if frontend_dist.exists():
+        frontend_asset_dir = frontend_dist / "assets"
+
+        @app.get("/admin", include_in_schema=False)
+        async def removed_admin_index() -> None:
+            raise HTTPException(status_code=404, detail="Legacy /admin UI has been removed")
+
+        @app.get("/admin/{path:path}", include_in_schema=False)
+        async def removed_admin_path(path: str) -> None:
+            raise HTTPException(status_code=404, detail=f"Legacy /admin/{path} UI has been removed")
+
+        @app.get("/workbench", include_in_schema=False)
+        async def legacy_workbench_index() -> RedirectResponse:
+            return RedirectResponse(url="/", status_code=307)
+
+        @app.get("/workbench/{path:path}", include_in_schema=False)
+        async def legacy_workbench_path(path: str) -> RedirectResponse:
+            normalized = path.lstrip("/")
+            return RedirectResponse(url=f"/{normalized}" if normalized else "/", status_code=307)
+
+        @app.get("/", include_in_schema=False)
+        async def frontend_index() -> FileResponse:
+            return FileResponse(frontend_dist / "index.html")
+
+        @app.get("/{path:path}", include_in_schema=False)
+        async def frontend_spa(path: str) -> FileResponse:
+            if not path:
+                return FileResponse(frontend_dist / "index.html")
+
+            requested = frontend_dist / path
+            if requested.is_file():
+                return FileResponse(requested)
+
+            assets_requested = frontend_asset_dir / path.removeprefix("assets/")
+            if path.startswith("assets/") and assets_requested.is_file():
+                return FileResponse(assets_requested)
+
+            if "." in Path(path).name:
+                raise HTTPException(status_code=404, detail="Frontend asset not found")
+            return FileResponse(frontend_dist / "index.html")
+
     return app

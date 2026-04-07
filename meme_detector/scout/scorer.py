@@ -6,13 +6,12 @@ from __future__ import annotations
 
 from datetime import date
 
-from rich.console import Console
-
+from meme_detector.logging_utils import get_logger
 from meme_detector.scout.collector import collect_all_partitions
 from meme_detector.scout.models import ScoutRunResult
 from meme_detector.scout.persistence import persist_raw_videos
 
-console = Console()
+logger = get_logger(__name__)
 
 
 def _flatten_partition_videos(all_partition_data: dict) -> tuple[list[dict], int]:
@@ -46,18 +45,32 @@ async def run_scout(target_date: date | None = None) -> ScoutRunResult:
     候选词提取延后到 Researcher 阶段处理。
     """
     today = target_date or date.today()
-    console.print(f"\n[bold blue]═══ Scout 开始运行 {today} ═══[/bold blue]")
+    logger.info("scout started", extra={"event": "scout_started", "target_date": today.isoformat()})
 
     all_partition_data = await collect_all_partitions()
     flattened_videos, total_comments = _flatten_partition_videos(all_partition_data)
 
     total_videos = len(flattened_videos)
-    console.print(f"\n共采集 {total_videos} 个视频，{total_comments} 条高赞评论")
+    logger.info(
+        "scout collection summary",
+        extra={
+            "event": "scout_collection_summary",
+            "target_date": today.isoformat(),
+            "video_count": total_videos,
+            "comment_count": total_comments,
+        },
+    )
 
     persist_raw_videos(flattened_videos, today)
 
-    console.print(
-        f"[bold green]Scout 完成，已写入 {total_videos} 个视频快照和 {total_comments} 条评论[/bold green]"
+    logger.info(
+        "scout completed",
+        extra={
+            "event": "scout_completed",
+            "target_date": today.isoformat(),
+            "video_count": total_videos,
+            "comment_count": total_comments,
+        },
     )
     return ScoutRunResult(
         target_date=today.isoformat(),

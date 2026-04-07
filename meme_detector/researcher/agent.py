@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from datetime import date
 
-from rich.console import Console
 from rich.progress import track
 
 import meme_detector.researcher.deep_analysis as _deep_analysis_module
@@ -42,7 +41,6 @@ from meme_detector.researcher.tools import (
 )
 from meme_detector.run_tracker import get_current_run_id
 
-console = Console()
 logger = get_logger(__name__)
 
 
@@ -59,14 +57,16 @@ async def _deep_analyze(*args, **kwargs):
 
 async def run_research() -> ResearchRunResult:
     """完整的 AI 分析流程。"""
-    console.print("\n[bold blue]═══ Researcher 开始运行 ═══[/bold blue]")
+    logger.info("researcher started", extra={"event": "research_started"})
 
     pending_videos = _list_pending_scout_videos()
     if pending_videos:
-        console.print(
-            f"[yellow]检测到 {len(pending_videos)} 个待 Miner 处理的视频；"
-            "请先手动运行 `python -m meme_detector miner`，"
-            "Research 本次不处理候选词。[/yellow]"
+        logger.warning(
+            "research blocked by pending miner videos",
+            extra={
+                "event": "research_blocked_by_pending_miner_videos",
+                "video_count": len(pending_videos),
+            },
         )
         return ResearchRunResult.blocked_by_pending_videos(len(pending_videos))
 
@@ -78,13 +78,16 @@ async def run_research() -> ResearchRunResult:
     )
 
     if not candidates:
-        console.print("[yellow]暂无待分析候选词[/yellow]")
+        logger.info("no pending candidates for research", extra={"event": "research_no_pending_candidates"})
         return result
 
-    console.print(f"共 {len(candidates)} 个候选词待分析")
+    logger.info(
+        "research candidates loaded",
+        extra={"event": "research_candidates_loaded", "candidate_count": len(candidates)},
+    )
 
     # ── Step 1: 批量快速筛选 ─────────────────────────────────
-    console.print("\n[bold]Step 1: 快速批量筛选...[/bold]")
+    logger.info("research step 1 screening started", extra={"event": "research_step_screening_started"})
     screen_results = await _batch_screen(candidates)
     result.screened_count = len(screen_results)
 
@@ -96,10 +99,14 @@ async def run_research() -> ResearchRunResult:
     result.deep_analysis_count = len(to_deep)
     result.screen_failed_words = pending_retry
 
-    console.print(
-        f"  筛选结果：[green]{len(to_deep)} 个通过[/green]，"
-        f"[red]{len(rejected)} 个拒绝[/red]，"
-        f"[yellow]{len(pending_retry)} 个待重试[/yellow]"
+    logger.info(
+        "research screening summary",
+        extra={
+            "event": "research_screening_summary",
+            "accepted_count": len(to_deep),
+            "rejected_count": len(rejected),
+            "failed_count": len(pending_retry),
+        },
     )
     logger.info(
         "research screening completed",
@@ -117,7 +124,7 @@ async def run_research() -> ResearchRunResult:
         return result
 
     # ── Step 2 & 3: 深度分析 + URL 验证 ──────────────────────
-    console.print("\n[bold]Step 2: 深度分析 + 溯源...[/bold]")
+    logger.info("research step 2 deep analysis started", extra={"event": "research_step_deep_analysis_started"})
     today = date.today()
 
     for c in track(to_deep, description="分析中..."):
@@ -130,7 +137,6 @@ async def run_research() -> ResearchRunResult:
                 "word": word,
             },
         )
-        console.print(f"\n  → [{word}] confidence={screen.confidence:.2f}")
 
         record = await _deep_analyze(
             word=word,
@@ -151,8 +157,14 @@ async def run_research() -> ResearchRunResult:
         if record.source_urls:
             original_source_count = len(record.source_urls)
             valid_urls = await verify_urls(record.source_urls)
-            console.print(
-                f"     来源验证：{original_source_count} → {len(valid_urls)} 个有效"
+            logger.info(
+                "research source urls verified",
+                extra={
+                    "event": "research_source_urls_verified",
+                    "word": word,
+                    "source_count": original_source_count,
+                    "valid_source_count": len(valid_urls),
+                },
             )
             record.source_urls = valid_urls
             # 有效来源少于预期时，适当降低置信度
@@ -165,9 +177,14 @@ async def run_research() -> ResearchRunResult:
             "research candidate accepted",
             extra={"event": "research_candidate_accepted", "word": word},
         )
-        console.print("     [green]✓ 已接受并完成索引写入[/green]")
 
-    console.print(
-        f"\n[bold green]Researcher 完成：{result.accepted_count} 个梗成功入库[/bold green]"
+    logger.info(
+        "researcher completed",
+        extra={
+            "event": "research_completed",
+            "accepted_count": result.accepted_count,
+            "rejected_count": result.rejected_count,
+            "failed_count": len(result.failed_words),
+        },
     )
     return result

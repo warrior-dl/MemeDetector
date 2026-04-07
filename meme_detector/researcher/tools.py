@@ -16,12 +16,15 @@ _VOLCENGINE_API_KEY_URL = "https://open.feedcoopapi.com/search_api/web_search"
 
 
 def _build_web_search_body(query: str, count: int, search_type: str) -> dict:
-    return {
+    body = {
         "Query": query[:100],
         "SearchType": search_type,
         "Count": max(1, min(count, 50)),
         "QueryControl": {"QueryRewrite": True},
     }
+    if search_type == "web_summary":
+        body["NeedSummary"] = True
+    return body
 
 
 def _parse_volcengine_web_results(data: dict, count: int) -> list[dict]:

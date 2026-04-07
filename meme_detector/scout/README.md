@@ -17,7 +17,7 @@
 - **自动**：每日 02:05 由 `scheduler.py` 调用 `run_scout()`
 - **手动**：`python -m meme_detector scout`
 
-如果 `serve` 正在运行，手动调试更推荐走 `/admin` 页面内的任务触发按钮，避免额外起新进程与 DuckDB 写锁冲突。
+如果 `serve` 正在运行，手动调试更推荐直接在根路径工作台 `/` 中触发任务，避免额外起新进程与 DuckDB 写锁冲突。
 
 ## 采集范围（MVP）
 

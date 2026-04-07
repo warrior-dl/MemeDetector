@@ -14,12 +14,9 @@ from datetime import datetime
 from threading import Lock
 from typing import Any
 
-from rich.console import Console
-
 from meme_detector.logging_utils import get_logger
 from meme_detector.run_tracker import execute_tracked_job
 
-console = Console()
 logger = get_logger(__name__)
 
 JOB_NAMES = ("scout", "miner", "research")
@@ -171,7 +168,6 @@ async def start_background_job(job_name: str, *, trigger_mode: str = "manual") -
                 "background job failed",
                 extra={"event": "background_job_failed", "job_name": job_name, "trigger_mode": trigger_mode},
             )
-            console.print(f"[red]{job_name} 后台任务失败: {exc}[/red]")
 
     task = asyncio.create_task(_runner(), name=f"pipeline:{job_name}:{trigger_mode}")
     _background_tasks.add(task)

@@ -201,11 +201,18 @@ async def list_candidates_page(
         None,
         description="状态过滤：pending / accepted / rejected，不传则返回全部",
     ),
+    keyword: str | None = Query(None, description="词条 / 解释 / 评论样本关键字过滤"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> dict:
     return _run_with_conn(
-        lambda conn: get_candidates_page(conn, status=status, limit=limit, offset=offset)
+        lambda conn: get_candidates_page(
+            conn,
+            status=status,
+            keyword=keyword,
+            limit=limit,
+            offset=offset,
+        )
     )
 
 

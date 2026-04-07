@@ -8,14 +8,12 @@ import json
 from typing import Any
 
 from openai import AsyncOpenAI
-from rich.console import Console
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from meme_detector.config import settings
 from meme_detector.logging_utils import get_logger
 from meme_detector.researcher.models import QuickScreenResult
 
-console = Console()
 logger = get_logger(__name__)
 
 _SCREEN_SYSTEM = """\
@@ -87,10 +85,6 @@ async def batch_screen(
                 "result_count": len(results),
                 "raw_summary": summarize_screen_raw(raw),
             },
-        )
-        console.print(
-            f"[yellow]Step 1 快筛仅解析到 {len(results)}/{len(candidates)} 个结果；"
-            f"其余候选会保留待重试。原始响应摘要：{summarize_screen_raw(raw)}[/yellow]"
         )
     return results
 

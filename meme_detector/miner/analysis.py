@@ -8,7 +8,6 @@ import hashlib
 import json
 
 from openai import AsyncOpenAI
-from rich.console import Console
 
 from meme_detector.archivist.duckdb_store import (
     create_agent_conversation,
@@ -21,7 +20,6 @@ from meme_detector.miner.models import CommentInsightResult
 from meme_detector.miner.video_context import get_bilibili_video_context
 from meme_detector.run_tracker import get_current_run_id
 
-console = Console()
 logger = get_logger(__name__)
 
 _MINER_SYSTEM = """\
@@ -111,10 +109,6 @@ async def score_video_comments(video: dict, comments: list[str]) -> list[dict]:
                         "chunk_index": chunk_index,
                     },
                     exc_info=exc,
-                )
-                console.print(
-                    f"[yellow]  评论批次 {chunk_index + 1}/{len(chunks)} 分析失败: "
-                    f"{summarize_exception(exc)}[/yellow]"
                 )
                 conversation_messages.append(
                     {

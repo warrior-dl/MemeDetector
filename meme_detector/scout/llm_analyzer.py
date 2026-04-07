@@ -7,12 +7,12 @@ from __future__ import annotations
 import json
 
 from openai import AsyncOpenAI
-from rich.console import Console
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from meme_detector.config import settings
+from meme_detector.logging_utils import get_logger
 
-console = Console()
+logger = get_logger(__name__)
 
 _SYSTEM_PROMPT = """\
 你是一位互联网亚文化观察者，专门从B站评论区识别正在传播的网络梗。
@@ -82,13 +82,40 @@ async def analyze_all_comments(
 
     batches = [all_comments[i : i + batch_size] for i in range(0, len(all_comments), batch_size)]
     for idx, batch in enumerate(batches, 1):
-        console.print(f"  批次 {idx}/{len(batches)}，{len(batch)} 条评论...")
+        logger.info(
+            "scout llm batch started",
+            extra={
+                "event": "scout_llm_batch_started",
+                "chunk_index": idx - 1,
+                "batch_index": idx,
+                "batch_total": len(batches),
+                "comment_count": len(batch),
+            },
+        )
         try:
             memes = await _extract_memes_from_batch(batch)
-            console.print(f"    → 发现 {len(memes)} 个候选")
+            logger.info(
+                "scout llm batch completed",
+                extra={
+                    "event": "scout_llm_batch_completed",
+                    "chunk_index": idx - 1,
+                    "batch_index": idx,
+                    "batch_total": len(batches),
+                    "candidate_count": len(memes),
+                },
+            )
             all_memes.extend(memes)
         except Exception as e:
-            console.print(f"[yellow]    批次 {idx} 分析失败: {e}[/yellow]")
+            logger.warning(
+                "scout llm batch failed",
+                extra={
+                    "event": "scout_llm_batch_failed",
+                    "chunk_index": idx - 1,
+                    "batch_index": idx,
+                    "batch_total": len(batches),
+                },
+                exc_info=e,
+            )
 
     # 按 phrase 去重，保留置信度最高的
     seen: dict[str, dict] = {}

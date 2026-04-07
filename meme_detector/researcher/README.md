@@ -21,7 +21,7 @@
 
 当前流程不会自动触发 `miner`。
 如果还存在 `scout_raw_videos.miner_status='pending'` 的视频，`research` 会直接退出并提示先手动运行 `miner`。
-如果 `serve` 正在运行，推荐在 `/admin` 中触发任务，避免 DuckDB 锁冲突。
+如果 `serve` 正在运行，推荐直接在根路径工作台 `/` 中触发任务，避免 DuckDB 锁冲突。
 
 ## 四步分析流程
 

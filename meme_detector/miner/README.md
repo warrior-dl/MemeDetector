@@ -17,7 +17,7 @@
 - 自动：每日 03:00 由 `scheduler.py` 调用 `run_miner()`
 - 手动：`python -m meme_detector miner`
 
-如果 `serve` 正在运行，推荐在 `/admin` 中触发 Miner，而不是另开 CLI 进程，避免 DuckDB 锁冲突。
+如果 `serve` 正在运行，推荐直接在根路径工作台 `/` 中触发 Miner，而不是另开 CLI 进程，避免 DuckDB 锁冲突。
 
 ## 输入与输出
 

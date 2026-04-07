@@ -6,19 +6,17 @@
 
 | 文件 | 职责 |
 |------|------|
-| `app.py`    | FastAPI 应用工厂，注册 API 路由、静态资源与管理页 |
+| `app.py`    | FastAPI 应用工厂，注册 API 路由与前端工作台 |
 | `routes.py` | 所有 REST API 路由处理函数 |
 
-## 管理页
+## 前端工作台
 
 | 页面 | 路径 | 说明 |
 |------|------|------|
-| 总览 | `/admin` | 查看统计、调度状态、运行记录、最近结果 |
-| Scout 原始数据 | `/admin/scout` | 查看 Scout 写入 DuckDB 的原始视频/评论快照 |
-| Miner 评论线索 | `/admin/miner` | 查看 Miner 对评论的初筛结果、理由与视频上下文 |
-| 候选梗队列 | `/admin/candidates` | 分页查看全部候选梗，支持清空 |
-| 候选梗来源线索 | `/admin/candidate-sources?word=` | 查看单个候选梗关联的视频引用与来源评论线索 |
-| Agent 对话 | `/admin/conversations` | 查看 Researcher 对每个候选词的完整对话上下文 |
+| Dashboard | `/` | 查看统计、最近运行、最近对话、异常审计 |
+| 候选工作台 | `/candidates` | 查看候选词、来源线索、Researcher 对话并执行审核 |
+| 梗库 | `/library` | 查看已入库词条并做人工校验 |
+| Pipeline | `/pipeline` | 查看调度计划、运行记录和单次运行详情 |
 
 ## 接口列表
 
@@ -85,18 +83,16 @@
 http://localhost:8000/docs
 ```
 
-管理台入口：
+工作台入口：
 
 ```text
-http://localhost:8000/admin
-http://localhost:8000/admin/scout
-http://localhost:8000/admin/miner
-http://localhost:8000/admin/candidates
-http://localhost:8000/admin/candidate-sources?word=抽象圣经
-http://localhost:8000/admin/conversations
+http://localhost:8000/
+http://localhost:8000/candidates
+http://localhost:8000/library
+http://localhost:8000/pipeline
 ```
 
 ## 扩展建议
 
-- 需要鉴权时，在 `app.py` 中为管理页和内部 API 添加 FastAPI `Depends`
-- 如果要把 Agent 对话渲染成更友好的时间线，可在管理页前端对 `messages` JSON 做结构化展示
+- 需要鉴权时，在 `app.py` 中为前端工作台和内部 API 添加 FastAPI `Depends`
+- 如果要把 Agent 对话渲染成更友好的时间线，可在前端工作台对 `messages` JSON 做结构化展示

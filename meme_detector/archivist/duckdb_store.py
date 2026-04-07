@@ -1540,15 +1540,22 @@ def get_candidates_page(
     conn: duckdb.DuckDBPyConnection,
     *,
     status: str | None = None,
+    keyword: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> dict:
     """分页获取候选梗完整信息。"""
-    where_clause = ""
+    where_parts: list[str] = []
     params: list[str | int] = []
     if status:
-        where_clause = "WHERE status = ?"
+        where_parts.append("status = ?")
         params.append(status)
+    if keyword:
+        where_parts.append("(word LIKE ? OR explanation LIKE ? OR sample_comments LIKE ?)")
+        wildcard_keyword = f"%{keyword}%"
+        params.extend([wildcard_keyword, wildcard_keyword, wildcard_keyword])
+
+    where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
     total = conn.execute(
         f"SELECT COUNT(*) FROM candidates {where_clause}",

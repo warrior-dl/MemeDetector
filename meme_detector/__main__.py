@@ -11,11 +11,8 @@ meme_detector 包主入口。
 import asyncio
 import sys
 
-from rich.console import Console
-
 from meme_detector.logging_utils import get_logger, setup_logging
 
-console = Console()
 logger = get_logger(__name__)
 
 
@@ -34,9 +31,14 @@ def main() -> None:
     elif cmd == "reset":
         _reset()
     else:
-        logger.warning("unknown command", extra={"event": "unknown_command", "command": cmd})
-        console.print(f"[red]未知命令: {cmd}[/red]")
-        console.print("用法: python -m meme_detector [serve|scout|miner|research|reset]")
+        logger.error(
+            "unknown command",
+            extra={"event": "unknown_command", "command": cmd},
+        )
+        logger.error(
+            "usage: python -m meme_detector [serve|scout|miner|research|reset]",
+            extra={"event": "unknown_command_usage", "command": cmd},
+        )
         sys.exit(1)
 
 
@@ -82,16 +84,16 @@ def _reset() -> None:
             "meili_message": result["meili_message"],
         },
     )
-    console.print("[bold blue]═══ 数据已清空 ═══[/bold blue]")
-    console.print(
+    logger.info("data reset summary", extra={"event": "data_reset_summary"})
+    logger.info(
         f"DuckDB: {result['duckdb_path']} "
         f"({'deleted' if result['duckdb_deleted'] else 'not found'})"
     )
-    console.print(
+    logger.info(
         f"Media assets: {result['media_asset_root']} "
         f"({'cleared' if result['media_assets_deleted'] else 'already empty'})"
     )
-    console.print(
+    logger.info(
         f"Meilisearch: "
         f"{'cleared' if result['meili_index_cleared'] else 'warning'} "
         f"({result['meili_message']})"

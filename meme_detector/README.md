@@ -59,7 +59,7 @@ python -m meme_detector research
 
 [serve / 手动命令]
     └─▶ run_tracker 记录 pipeline_runs
-        └─▶ 管理台 /admin /admin/scout /admin/miner /admin/candidates /admin/conversations 可视化查看
+        └─▶ 工作台 / /candidates /library /pipeline 可视化查看
 ```
 
 ## 配置
@@ -76,8 +76,7 @@ python -m meme_detector research
 - `scout_raw_videos`：保存 Scout 采集到的原始视频/评论快照，供 Miner 挖掘
 - `scout_raw_comments` / `media_assets` / `comment_media_links`：保存结构化评论、评论图片资产及评论到图片的关联关系
 - 管理台入口：
-  - `/admin`
-  - `/admin/scout`
-  - `/admin/miner`
-  - `/admin/candidates`
-  - `/admin/conversations`
+  - `/`
+  - `/candidates`
+  - `/library`
+  - `/pipeline`
