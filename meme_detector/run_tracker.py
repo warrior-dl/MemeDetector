@@ -76,6 +76,16 @@ def _build_job_summary(job_name: str, result: Any) -> dict[str, Any]:
             "payload": payload,
         }
 
+    if job_name == "miner":
+        payload = result if isinstance(result, dict) else {}
+        insight_count = int(payload.get("insight_count", 0))
+        high_value_count = int(payload.get("high_value_count", 0))
+        return {
+            "result_count": insight_count,
+            "summary": f"写入 {insight_count} 条评论线索，高价值 {high_value_count} 条",
+            "payload": payload,
+        }
+
     if job_name == "research" and isinstance(result, dict):
         accepted_count = int(result.get("accepted_count", 0))
         rejected_count = int(result.get("rejected_count", 0))

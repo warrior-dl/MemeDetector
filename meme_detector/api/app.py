@@ -34,6 +34,18 @@ def create_app() -> FastAPI:
     async def admin_candidates_page() -> FileResponse:
         return FileResponse(static_dir / "candidates.html")
 
+    @app.get("/admin/candidate-sources", include_in_schema=False)
+    async def admin_candidate_sources_page() -> FileResponse:
+        return FileResponse(static_dir / "candidate_sources.html")
+
+    @app.get("/admin/scout", include_in_schema=False)
+    async def admin_scout_page() -> FileResponse:
+        return FileResponse(static_dir / "scout.html")
+
+    @app.get("/admin/miner", include_in_schema=False)
+    async def admin_miner_page() -> FileResponse:
+        return FileResponse(static_dir / "miner.html")
+
     @app.get("/admin/conversations", include_in_schema=False)
     async def admin_conversations_page() -> FileResponse:
         return FileResponse(static_dir / "conversations.html")

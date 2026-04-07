@@ -14,6 +14,8 @@ from datetime import date
 from openai import AsyncOpenAI
 from pydantic_ai import Agent, capture_run_messages, messages
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.deepseek import DeepSeekProvider
+from pydantic_ai.providers.moonshotai import MoonshotAIProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from rich.console import Console
 from rich.progress import track
@@ -24,7 +26,9 @@ from meme_detector.archivist.duckdb_store import (
     finish_agent_conversation,
     get_conn,
     get_pending_candidates,
+    get_pending_miner_comment_insights,
     get_pending_scout_raw_videos,
+    mark_miner_comment_insights_processed,
     mark_scout_raw_videos_processed,
     upsert_scout_candidates,
     update_candidate_status,
@@ -36,23 +40,45 @@ from meme_detector.researcher.tools import (
     bilibili_search,
     verify_urls,
     web_search,
+    web_search_summary,
 )
-from meme_detector.researcher.video_context import get_bilibili_video_context
+from meme_detector.miner.video_context import get_bilibili_video_context
 from meme_detector.run_tracker import get_current_run_id
 
 console = Console()
 
 # ── 模型初始化 ──────────────────────────────────────────────
 
-def _get_deepseek_model() -> OpenAIModel:
+def _get_research_model() -> OpenAIModel:
     client = AsyncOpenAI(
         api_key=settings.deepseek_api_key,
         base_url=settings.deepseek_base_url,
     )
+    provider = _build_research_provider(
+        client=client,
+        model_name=settings.deepseek_model,
+        base_url=settings.deepseek_base_url,
+    )
     return OpenAIModel(
         settings.deepseek_model,
-        provider=OpenAIProvider(openai_client=client),
+        provider=provider,
     )
+
+
+def _build_research_provider(
+    *,
+    client: AsyncOpenAI,
+    model_name: str,
+    base_url: str,
+) -> OpenAIProvider | DeepSeekProvider | MoonshotAIProvider:
+    normalized_model = model_name.strip().lower()
+    normalized_base_url = base_url.strip().lower()
+
+    if normalized_model.startswith("kimi") or "moonshot" in normalized_base_url:
+        return MoonshotAIProvider(openai_client=client)
+    if normalized_model.startswith("deepseek") or "deepseek" in normalized_base_url:
+        return DeepSeekProvider(openai_client=client)
+    return OpenAIProvider(openai_client=client)
 
 
 # ── Step 0: 从原始评论提取候选词 ──────────────────────────────
@@ -113,6 +139,12 @@ async def _extract_candidate_seeds(
             if not isinstance(comments, list):
                 comments = []
             trimmed_comments = [str(comment).strip()[:80] for comment in comments if str(comment).strip()][:8]
+            video_context = video.get("video_context", {})
+            if not isinstance(video_context, dict):
+                video_context = {}
+            tags = video.get("tags", [])
+            if not isinstance(tags, list):
+                tags = []
             payload_lines.append(
                 "\n".join(
                     [
@@ -120,6 +152,9 @@ async def _extract_candidate_seeds(
                         f'分区: {video.get("partition", "")}',
                         f'标题: {str(video.get("title", "")).strip()[:80]}',
                         f'简介: {str(video.get("description", "")).strip()[:120]}',
+                        f'标签: {", ".join(str(tag).strip() for tag in tags if str(tag).strip()) or "无"}',
+                        f'视频内容摘要: {str(video_context.get("summary", "")).strip()[:300] or "无"}',
+                        f'视频内容正文: {str(video_context.get("content_text", "")).strip()[:500] or "无"}',
                         "评论:",
                         *[f"- {comment}" for comment in trimmed_comments],
                     ]
@@ -134,7 +169,6 @@ async def _extract_candidate_seeds(
                 {"role": "user", "content": user_msg},
             ],
             response_format={"type": "json_object"},
-            temperature=0.1,
         )
 
         raw = resp.choices[0].message.content or "{}"
@@ -203,7 +237,10 @@ def _materialize_candidate_seeds(
             ]
             title = str(video.get("title", "")).strip()
             description = str(video.get("description", "")).strip()
-            matched_by_metadata = word in title or word in description
+            tags = video.get("tags", [])
+            if not isinstance(tags, list):
+                tags = []
+            matched_by_metadata = word in title or word in description or any(word in str(tag) for tag in tags)
             if video.get("bvid") in related_bvids and not matched_comments:
                 matched_by_metadata = True
 
@@ -219,6 +256,8 @@ def _materialize_candidate_seeds(
                     "title": title,
                     "description": description,
                     "url": video.get("url", ""),
+                    "tags": video.get("tags", []),
+                    "video_context": video.get("video_context", {}),
                     "matched_comment_count": len(matched_comments),
                     "matched_comments": unique_comments,
                 }
@@ -236,6 +275,8 @@ def _materialize_candidate_seeds(
                         "title": video.get("title", ""),
                         "description": video.get("description", ""),
                         "url": video.get("url", ""),
+                        "tags": video.get("tags", []),
+                        "video_context": video.get("video_context", {}),
                         "matched_comment_count": 0,
                         "matched_comments": [],
                     }
@@ -268,26 +309,73 @@ def _materialize_candidate_seeds(
     return sorted(candidates, key=lambda item: item["score"], reverse=True)
 
 
-async def _bootstrap_candidates_from_scout() -> list[dict]:
-    """将尚未处理的 Scout 原始视频转换成候选词队列。"""
+async def _bootstrap_candidates_from_miner() -> list[dict]:
+    """优先消费 Miner 产出的评论线索，再生成候选词。"""
     conn = get_conn()
+    pending_insights = get_pending_miner_comment_insights(conn, limit=5000)
     pending_videos = get_pending_scout_raw_videos(conn)
     conn.close()
-    if not pending_videos:
+
+    if not pending_insights:
+        if pending_videos:
+            console.print(
+                f"[yellow]检测到 {len(pending_videos)} 个待 Miner 处理的视频；"
+                "Research 不会自动触发 Miner，请先手动运行 "
+                "`python -m meme_detector miner`[/yellow]"
+            )
         return []
 
+    high_value_insights = [
+        item
+        for item in pending_insights
+        if item.get("confidence", 0.0) >= settings.miner_comment_confidence_threshold
+        and (item.get("is_meme_candidate") or item.get("is_insider_knowledge"))
+    ]
     console.print(
-        f"\n[bold]Step 0: 从 {len(pending_videos)} 个 Scout 原始视频快照中提取候选词...[/bold]"
+        f"\n[bold]Step 0: 从 {len(pending_insights)} 条 Miner 评论线索中抽取候选词，"
+        f"其中高价值 {len(high_value_insights)} 条...[/bold]"
     )
-    candidates = await _extract_candidate_seeds(pending_videos)
+    grouped_videos = _group_miner_insights_by_video(high_value_insights)
+    candidates = await _extract_candidate_seeds(grouped_videos)
 
+    touched_videos = [
+        {"bvid": item.get("bvid"), "collected_date": item.get("collected_date")}
+        for item in pending_insights
+    ]
     conn = get_conn()
     upsert_scout_candidates(conn, candidates)
-    mark_scout_raw_videos_processed(conn, pending_videos)
+    mark_miner_comment_insights_processed(conn, pending_insights)
+    mark_scout_raw_videos_processed(conn, touched_videos)
     conn.close()
 
     console.print(f"  生成 {len(candidates)} 个候选词")
     return candidates
+
+
+def _group_miner_insights_by_video(insights: list[dict]) -> list[dict]:
+    grouped: dict[tuple[str, object], dict] = {}
+    for item in insights:
+        key = (str(item.get("bvid", "")).strip(), item.get("collected_date"))
+        if not key[0] or not key[1]:
+            continue
+        current = grouped.setdefault(
+            key,
+            {
+                "bvid": key[0],
+                "collected_date": item.get("collected_date"),
+                "partition": item.get("partition", ""),
+                "title": item.get("title", ""),
+                "description": item.get("description", ""),
+                "url": item.get("url", ""),
+                "tags": item.get("tags", []),
+                "video_context": item.get("video_context", {}),
+                "comments": [],
+            },
+        )
+        current["comments"].append(str(item.get("comment_text", "")).strip())
+    for item in grouped.values():
+        item["comments"] = list(dict.fromkeys([comment for comment in item["comments"] if comment]))[:20]
+    return list(grouped.values())
 
 
 # ── Step 1: 快速批量筛选 ────────────────────────────────────
@@ -347,7 +435,6 @@ async def _batch_screen(
             {"role": "user", "content": user_msg},
         ],
         response_format={"type": "json_object"},
-        temperature=0.1,
     )
 
     raw = resp.choices[0].message.content or "{}"
@@ -368,14 +455,15 @@ async def _batch_screen(
 
 _DEEP_ANALYSIS_SYSTEM = """\
 你是一位专业的互联网亚文化研究员，正在为一个梗百科数据库撰写词条。
-你会收到 Research 阶段整理出的评论样本，以及系统预取的“评论对应视频”背景。
+你会收到 Research 阶段整理出的评论样本，以及系统预取的“评论对应视频”背景和外部搜索上下文。
 你有权调用 B站搜索 和 Web搜索 工具来补充查阅资料。
 
 请按以下步骤工作：
-1. 先阅读 prompt 中已经提供的评论样本和关联视频背景，它们优先级最高
+1. 先阅读 prompt 中已经提供的评论样本、关联视频背景、外部搜索上下文，它们优先级最高
 2. 再调用 bilibili_search 搜索该词，补充公开视频线索
-3. 再调用 web_search 搜索 "[词] 梗 来源" 获取外部背景
-4. 综合所有信息，填写完整的词条
+3. 如果系统预取的总结版搜索内容已经足够解释来源、语义和传播背景，就不要重复搜索
+4. 只有在系统预取信息不足、来源冲突、缺少原始出处细节时，再调用 web_search_summary 或 web_search
+6. 综合所有信息，填写完整的词条
 
 输出要求：
 - definition: 简洁解释含义，说明在网络上如何使用，不超过100字
@@ -391,10 +479,10 @@ _DEEP_ANALYSIS_SYSTEM = """\
 """
 
 deep_agent: Agent[None, MemeRecord] = Agent(
-    model=_get_deepseek_model(),
+    model=_get_research_model(),
     output_type=MemeRecord,
     system_prompt=_DEEP_ANALYSIS_SYSTEM,
-    tools=[bilibili_search, web_search],  # type: ignore[arg-type]
+    tools=[bilibili_search, web_search_summary, web_search],  # type: ignore[arg-type]
 )
 
 
@@ -421,6 +509,7 @@ async def _deep_analyze(
         conn.close()
 
     video_contexts = await _prepare_linked_video_contexts(video_refs)
+    external_search_context = await _prepare_external_search_context(word)
     prompt = (
         f'请为网络梗词汇「{word}」撰写完整词条。\n\n'
         f'检测信息：\n'
@@ -428,7 +517,8 @@ async def _deep_analyze(
         f'- 检测日期：{today}\n'
         f'- B站评论示例：\n{sample_comments or "（无样本）"}\n\n'
         f'- Scout 关联视频背景：\n{_format_video_contexts(video_contexts)}\n\n'
-        f'请优先结合这些评论对应的视频背景，再按需调用搜索工具后输出完整词条。'
+        f'- 外部搜索上下文：\n{_format_external_search_context(external_search_context)}\n\n'
+        f'请优先结合这些系统预取上下文，再按需调用搜索工具后输出完整词条。'
     )
 
     try:
@@ -473,7 +563,29 @@ async def run_research() -> dict:
     """完整的 AI 分析流程。"""
     console.print("\n[bold blue]═══ Researcher 开始运行 ═══[/bold blue]")
 
-    bootstrapped_candidates = await _bootstrap_candidates_from_scout()
+    conn = get_conn()
+    pending_videos = get_pending_scout_raw_videos(conn)
+    conn.close()
+    if pending_videos:
+        console.print(
+            f"[yellow]检测到 {len(pending_videos)} 个待 Miner 处理的视频；"
+            "请先手动运行 `python -m meme_detector miner`，"
+            "Research 本次不处理候选词。[/yellow]"
+        )
+        return {
+            "pending_count": 0,
+            "bootstrapped_count": 0,
+            "screened_count": 0,
+            "deep_analysis_count": 0,
+            "accepted_count": 0,
+            "rejected_count": 0,
+            "accepted_records": [],
+            "rejected_words": [],
+            "failed_words": [],
+            "blocked_pending_video_count": len(pending_videos),
+        }
+
+    bootstrapped_candidates = await _bootstrap_candidates_from_miner()
     conn = get_conn()
     candidates = get_pending_candidates(conn, limit=settings.ai_batch_size)
     conn.close()
@@ -487,6 +599,7 @@ async def run_research() -> dict:
         "accepted_records": [],
         "rejected_words": [],
         "failed_words": [],
+        "blocked_pending_video_count": 0,
     }
 
     if not candidates:
@@ -642,6 +755,48 @@ async def _prepare_linked_video_contexts(
     return prepared
 
 
+async def _prepare_external_search_context(word: str) -> dict:
+    query = f"{word} 梗 来源"
+    summary_result = await web_search_summary(query, num_results=5)
+    summary_ok = isinstance(summary_result, dict) and "error" not in summary_result
+    summary_sufficient = summary_ok and _is_summary_search_sufficient(summary_result)
+
+    web_results: list[dict] = []
+    if not summary_sufficient:
+        web_results = await web_search(query, num_results=5)
+
+    return {
+        "query": query,
+        "summary_result": summary_result,
+        "summary_sufficient": summary_sufficient,
+        "web_results": web_results,
+    }
+
+
+def _is_summary_search_sufficient(summary_result: dict) -> bool:
+    summary_text = str(summary_result.get("summary", "")).strip()
+    results = summary_result.get("results", [])
+    if not isinstance(results, list):
+        results = []
+
+    if len(summary_text) >= 80:
+        return True
+
+    rich_results = 0
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        snippet = str(item.get("snippet", "")).strip()
+        content = str(item.get("content", "")).strip()
+        if len(content) >= 80 or len(snippet) >= 50:
+            rich_results += 1
+
+    if len(summary_text) >= 50 and rich_results >= 1:
+        return True
+
+    return rich_results >= 2 or (summary_text and rich_results >= 1)
+
+
 def _select_linked_videos(video_refs: list[dict], limit: int = 2) -> list[dict]:
     normalized = [item for item in video_refs if isinstance(item, dict) and item.get("bvid")]
     normalized.sort(
@@ -710,3 +865,63 @@ def _format_video_contexts(video_contexts: list[dict]) -> str:
         sections.append("\n".join(lines))
 
     return "\n\n".join(sections)
+
+
+def _format_external_search_context(search_context: dict) -> str:
+    if not isinstance(search_context, dict):
+        return "（无外部搜索上下文）"
+
+    lines = [f"查询词: {search_context.get('query', '')}"]
+    summary_result = search_context.get("summary_result", {})
+    summary_sufficient = bool(search_context.get("summary_sufficient"))
+
+    if isinstance(summary_result, dict) and summary_result.get("error"):
+        lines.append(f"总结版搜索错误: {summary_result['error']}")
+    else:
+        lines.append(f"总结版搜索是否足够: {'是' if summary_sufficient else '否'}")
+        summary_text = ""
+        if isinstance(summary_result, dict):
+            summary_text = str(summary_result.get("summary", "")).strip()
+        lines.append(f"总结版摘要: {summary_text or '（无）'}")
+
+        summary_items = []
+        if isinstance(summary_result, dict):
+            raw_results = summary_result.get("results", [])
+            if isinstance(raw_results, list):
+                summary_items = raw_results[:3]
+
+        if summary_items:
+            lines.append("总结版来源:")
+            for index, item in enumerate(summary_items, 1):
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title", "")).strip()
+                link = str(item.get("link", "")).strip()
+                snippet = str(item.get("snippet", "")).strip()
+                content = str(item.get("content", "")).strip()
+                lines.append(f"{index}. {title or '未命名结果'}")
+                if link:
+                    lines.append(f"   链接: {link}")
+                if snippet:
+                    lines.append(f"   摘要: {snippet[:300]}")
+                if content:
+                    lines.append(f"   正文摘录: {content[:500]}")
+
+    web_results = search_context.get("web_results", [])
+    if isinstance(web_results, list) and web_results:
+        lines.append("普通网页搜索补充:")
+        for index, item in enumerate(web_results[:3], 1):
+            if not isinstance(item, dict):
+                continue
+            if item.get("error"):
+                lines.append(f"{index}. 错误: {item['error']}")
+                continue
+            lines.append(f"{index}. {str(item.get('title', '')).strip() or '未命名结果'}")
+            link = str(item.get("link", "")).strip()
+            if link:
+                lines.append(f"   链接: {link}")
+            snippet = str(item.get("snippet", "")).strip()
+            if snippet:
+                lines.append(f"   摘要: {snippet[:300]}")
+
+    return "\n".join(lines)

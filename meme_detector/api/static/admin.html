@@ -12,6 +12,8 @@
   <main class="shell">
     <nav class="top-nav">
       <a class="nav-link active" href="/admin">总览</a>
+      <a class="nav-link" href="/admin/scout">Scout 原始数据</a>
+      <a class="nav-link" href="/admin/miner">Miner 评论线索</a>
       <a class="nav-link" href="/admin/candidates">候选梗队列</a>
       <a class="nav-link" href="/admin/conversations">Agent 对话</a>
     </nav>
@@ -19,7 +21,7 @@
       <div>
         <p class="eyebrow">Operations Console</p>
         <h1>MemeDetector 控制台</h1>
-        <p class="hero-copy">查看调度任务、运行记录、候选梗队列与入库结果。</p>
+        <p class="hero-copy">查看 Scout 原始快照、Miner 评论线索、候选梗队列与入库结果。</p>
       </div>
       <div class="hero-actions">
         <button id="refreshButton" class="primary-button" type="button">刷新数据</button>
@@ -67,6 +69,7 @@
             <select id="jobFilter">
               <option value="">全部任务</option>
               <option value="scout">Scout</option>
+              <option value="miner">Miner</option>
               <option value="research">Researcher</option>
             </select>
             <select id="statusFilter">
@@ -92,6 +95,29 @@
     </section>
 
     <section class="workspace lower-grid">
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Scout</p>
+            <h2>最近原始快照</h2>
+          </div>
+          <a class="ghost-link" href="/admin/scout">查看全部</a>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>标题</th>
+                <th>分区</th>
+                <th>评论数</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody id="rawVideoRows"></tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="panel">
         <div class="section-head">
           <div>

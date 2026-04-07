@@ -7,6 +7,7 @@ const endpoints = {
   stats: "/api/v1/stats",
   jobs: "/api/v1/jobs",
   runs: "/api/v1/runs",
+  rawVideos: "/api/v1/scout/raw-videos?limit=10",
   candidates: "/api/v1/candidates?limit=20",
   memes: "/api/v1/memes?limit=20&sort_by=updated_at:desc",
 };
@@ -27,15 +28,17 @@ loadDashboard();
 
 async function loadDashboard() {
   try {
-    const [statsResponse, jobsResponse, candidatesResponse, memesResponse] = await Promise.all([
+    const [statsResponse, jobsResponse, rawVideosResponse, candidatesResponse, memesResponse] = await Promise.all([
       fetchJson(endpoints.stats),
       fetchJson(endpoints.jobs),
+      fetchJson(endpoints.rawVideos),
       fetchJson(endpoints.candidates),
       fetchJson(endpoints.memes),
     ]);
 
     renderStats(statsResponse);
     renderJobs(jobsResponse);
+    renderRawVideos(rawVideosResponse.items || []);
     renderCandidates(candidatesResponse);
     renderMemes(memesResponse.hits || []);
     await loadRuns();
@@ -187,27 +190,34 @@ function renderRunPayload(run) {
   }
 
   if (run.job_name === "scout") {
-    const candidates = payload.candidates || [];
-    if (!candidates.length) {
-      return '<p class="detail-summary">本次未识别到新的候选梗。</p>';
-    }
+    const targetDate = payload.target_date || "--";
+    const videoCount = payload.video_count ?? 0;
+    const commentCount = payload.comment_count ?? 0;
     return `
       <div class="detail-summary">
-        <p>本次识别到 ${payload.candidate_count || candidates.length} 个候选梗，以下为前 10 项：</p>
+        <p>本次 Scout 于 ${escapeHtml(targetDate)} 写入 ${videoCount} 个原始视频快照，采集 ${commentCount} 条评论。</p>
         <div class="chips">
-          ${candidates
-            .map(
-              (item) => `
-                <span class="chip" title="${escapeHtml(item.explanation || "")}">
-                  ${escapeHtml(item.phrase || "--")} · ${
-                    item.score != null
-                      ? `score ${Number(item.score || 0).toFixed(2)}`
-                      : formatPercent(item.confidence)
-                  }
-                </span>
-              `,
-            )
-            .join("")}
+          <span class="chip">采集日期 ${escapeHtml(targetDate)}</span>
+          <span class="chip">视频 ${videoCount}</span>
+          <span class="chip">评论 ${commentCount}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  if (run.job_name === "miner") {
+    const targetDate = payload.target_date || "--";
+    const videoCount = payload.video_count ?? 0;
+    const insightCount = payload.insight_count ?? 0;
+    const highValueCount = payload.high_value_count ?? 0;
+    return `
+      <div class="detail-summary">
+        <p>本次 Miner 处理 ${videoCount} 个视频，写入 ${insightCount} 条评论线索，其中 ${highValueCount} 条达到高价值阈值。</p>
+        <div class="chips">
+          <span class="chip">采集日期 ${escapeHtml(targetDate)}</span>
+          <span class="chip">视频 ${videoCount}</span>
+          <span class="chip">线索 ${insightCount}</span>
+          <span class="chip">高价值 ${highValueCount}</span>
         </div>
       </div>
     `;
@@ -230,6 +240,27 @@ function renderRunPayload(run) {
   }
 
   return `<pre>${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`;
+}
+
+function renderRawVideos(items) {
+  const tbody = document.getElementById("rawVideoRows");
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="4">暂无 Scout 原始数据</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = items
+    .map(
+      (item) => `
+        <tr>
+          <td>${escapeHtml(item.title || item.bvid || "--")}</td>
+          <td>${escapeHtml(item.partition || "--")}</td>
+          <td>${item.comment_count ?? 0}</td>
+          <td>${statusBadge(item.candidate_status)}</td>
+        </tr>
+      `,
+    )
+    .join("");
 }
 
 function renderCandidates(candidates) {
@@ -287,6 +318,7 @@ function statusBadge(status) {
     success: "成功",
     failed: "失败",
     pending: "待处理",
+    processed: "已提取",
     accepted: "已接受",
     rejected: "已拒绝",
   };
@@ -319,13 +351,12 @@ function formatDuration(value) {
   return `${Number(value).toFixed(1)}s`;
 }
 
-function formatPercent(value) {
-  return `${Math.round(Number(value || 0) * 100)}%`;
-}
-
 function formatJobName(name) {
   if (name === "scout") {
     return "Scout";
+  }
+  if (name === "miner") {
+    return "Miner";
   }
   if (name === "research") {
     return "Researcher";

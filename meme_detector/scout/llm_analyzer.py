@@ -62,7 +62,6 @@ async def _extract_memes_from_batch(comments: list[str]) -> list[dict]:
             {"role": "user", "content": user_msg},
         ],
         response_format={"type": "json_object"},
-        temperature=0.2,
     )
 
     raw = resp.choices[0].message.content or "{}"

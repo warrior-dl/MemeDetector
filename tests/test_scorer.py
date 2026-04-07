@@ -129,6 +129,7 @@ async def test_run_scout_persists_raw_video_snapshots(tmp_path, monkeypatch):
                     description="第一条视频",
                     url="https://www.bilibili.com/video/BV1TEST001",
                     comments=["这也太依托答辩了", "依托答辩名场面"],
+                    tags=["依托答辩", "抽象"],
                 ),
                 VideoTexts(
                     bvid="BV1TEST002",
@@ -137,6 +138,7 @@ async def test_run_scout_persists_raw_video_snapshots(tmp_path, monkeypatch):
                     description="第二条视频",
                     url="https://www.bilibili.com/video/BV1TEST002",
                     comments=["满屏都是依托答辩", "笑死"],
+                    tags=["答辩"],
                 ),
                 VideoTexts(
                     bvid="BV1TEST003",
@@ -145,6 +147,7 @@ async def test_run_scout_persists_raw_video_snapshots(tmp_path, monkeypatch):
                     description="第三条视频",
                     url="https://www.bilibili.com/video/BV1TEST003",
                     comments=["这就是依托答辩", "太抽象了"],
+                    tags=["抽象"],
                 ),
             ]
         }
@@ -167,5 +170,6 @@ async def test_run_scout_persists_raw_video_snapshots(tmp_path, monkeypatch):
     assert len(raw_videos) == 3
     target = next(item for item in raw_videos if item["bvid"] == "BV1TEST001")
     assert target["title"] == "依托答辩合集"
+    assert target["tags"] == ["依托答辩", "抽象"]
     assert target["comments"] == ["这也太依托答辩了", "依托答辩名场面"]
     assert pending == []

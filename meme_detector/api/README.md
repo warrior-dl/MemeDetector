@@ -14,7 +14,10 @@
 | 页面 | 路径 | 说明 |
 |------|------|------|
 | 总览 | `/admin` | 查看统计、调度状态、运行记录、最近结果 |
+| Scout 原始数据 | `/admin/scout` | 查看 Scout 写入 DuckDB 的原始视频/评论快照 |
+| Miner 评论线索 | `/admin/miner` | 查看 Miner 对评论的初筛结果、理由与视频上下文 |
 | 候选梗队列 | `/admin/candidates` | 分页查看全部候选梗，支持清空 |
+| 候选梗来源线索 | `/admin/candidate-sources?word=` | 查看单个候选梗关联的视频引用与来源评论线索 |
 | Agent 对话 | `/admin/conversations` | 查看 Researcher 对每个候选词的完整对话上下文 |
 
 ## 接口列表
@@ -36,12 +39,24 @@
 | `verified_only` | bool | `true` |
 | `sort_by` | string | `heat_index:desc`（默认） |
 
+### Scout 原始数据（内部）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/v1/scout/raw-videos` | Scout 原始视频快照分页列表 |
+| `GET` | `/api/v1/scout/raw-videos/{bvid}?collected_date=` | 单条原始快照详情 |
+| `GET` | `/api/v1/miner/comment-insights` | Miner 评论线索分页列表 |
+| `GET` | `/api/v1/miner/comment-insights/{insight_id}` | 单条 Miner 评论线索详情 |
+| `GET` | `/api/v1/media-assets/{asset_id}` | 图片资产元数据 |
+| `GET` | `/api/v1/media-assets/{asset_id}/content` | 图片资产本地文件内容 |
+
 ### 候选词管理（内部）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/api/v1/candidates` | 候选词列表（简表） |
 | `GET` | `/api/v1/candidates/page` | 候选词分页列表（完整字段） |
+| `GET` | `/api/v1/candidates/{word}/sources` | 单个候选词的来源视频与评论线索 |
 | `DELETE` | `/api/v1/candidates` | 删除全部候选词 |
 | `POST` | `/api/v1/candidates/{word}/verify?action=accept\|reject` | 人工审核 |
 | `POST` | `/api/v1/memes/{id}/verify?verified=true` | 标记梗为人工验证 |
@@ -73,7 +88,10 @@ http://localhost:8000/docs
 
 ```text
 http://localhost:8000/admin
+http://localhost:8000/admin/scout
+http://localhost:8000/admin/miner
 http://localhost:8000/admin/candidates
+http://localhost:8000/admin/candidate-sources?word=抽象圣经
 http://localhost:8000/admin/conversations
 ```
 

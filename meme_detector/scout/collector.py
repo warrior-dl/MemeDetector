@@ -9,7 +9,7 @@ import asyncio
 import random
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from bilibili_api import Credential, comment, rank, request_settings, video
 from bilibili_api.comment import CommentResourceType, OrderType
@@ -39,6 +39,8 @@ class VideoTexts:
     description: str
     url: str
     comments: list[str]
+    tags: list[str] = field(default_factory=list)
+    comment_snapshots: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -150,14 +152,14 @@ async def _fetch_video_comments(
     credential: Credential | None,
     max_count: int,
     risk_state: CommentRiskState,
-) -> list[str]:
-    """获取视频热评文本列表。"""
+) -> list[dict]:
+    """获取视频热评结构化快照列表。"""
     v = video.Video(bvid=bvid, credential=credential)
-    texts: list[str] = []
+    snapshots: list[dict] = []
     page = 1
     try:
         aid = v.get_aid()
-        while len(texts) < max_count:
+        while len(snapshots) < max_count:
             retries = 0
             while True:
                 result: dict | None = None
@@ -180,7 +182,7 @@ async def _fetch_video_comments(
                     if not retryable or retries >= settings.scout_comment_retry_times:
                         label = "评论触发风控" if risk_control else "评论获取失败"
                         console.print(f"[yellow]  {label} {bvid}: {e}[/yellow]")
-                        return texts[:max_count]
+                        return snapshots[:max_count]
 
                     console.print(
                         "[yellow]"
@@ -197,14 +199,37 @@ async def _fetch_video_comments(
                 break
             for reply in replies:
                 content = reply.get("content", {}).get("message", "")
-                if content:
-                    texts.append(content)
+                if not content:
+                    continue
+                content_payload = reply.get("content") or {}
+                pictures = content_payload.get("pictures") or []
+                if not isinstance(pictures, list):
+                    pictures = []
+                snapshots.append(
+                    {
+                        "rpid": int(reply.get("rpid") or 0),
+                        "root_rpid": int(reply.get("root") or 0) or None,
+                        "parent_rpid": int(reply.get("parent") or 0) or None,
+                        "mid": int(reply.get("mid") or 0) or None,
+                        "uname": str((reply.get("member") or {}).get("uname") or ""),
+                        "message": str(content),
+                        "like_count": int(reply.get("like") or 0),
+                        "reply_count": int(reply.get("rcount") or 0),
+                        "ctime": int(reply.get("ctime") or 0) or None,
+                        "pictures": [
+                            picture for picture in pictures
+                            if isinstance(picture, dict) and str(picture.get("img_src", "")).strip()
+                        ],
+                        "content": content_payload,
+                        "raw_reply": reply,
+                    }
+                )
             page += 1
             await _random_delay()
         risk_state.note_success()
     except Exception as e:
         console.print(f"[yellow]  评论获取失败 {bvid}: {e}[/yellow]")
-    return texts[:max_count]
+    return snapshots[:max_count]
 
 
 async def _fetch_partition_top_videos(
@@ -232,6 +257,18 @@ async def _fetch_partition_top_videos(
         console.print(f"  [{i}/{len(video_items)}] {bvid} ...", end=" ")
         try:
             comments: list[str] = []
+            tags: list[str] = []
+            comment_snapshots: list[dict] = []
+            current_video = video.Video(bvid=bvid, credential=credential)
+            try:
+                tag_rows = await current_video.get_tags()
+                tags = [
+                    str(tag.get("tag_name", "")).strip()
+                    for tag in tag_rows
+                    if isinstance(tag, dict) and str(tag.get("tag_name", "")).strip()
+                ]
+            except Exception as e:
+                console.print(f"[yellow]标签获取失败 {bvid}: {e}[/yellow]", end=" ")
             if risk_state.should_skip_comments():
                 console.print(
                     "[yellow]"
@@ -241,12 +278,17 @@ async def _fetch_partition_top_videos(
                     end=" ",
                 )
             else:
-                comments = await _fetch_video_comments(
+                comment_snapshots = await _fetch_video_comments(
                     bvid,
                     credential,
                     settings.scout_comments_per_video,
                     risk_state,
                 )
+                comments = [
+                    str(snapshot.get("message", "")).strip()
+                    for snapshot in comment_snapshots
+                    if str(snapshot.get("message", "")).strip()
+                ]
             results.append(
                 VideoTexts(
                     bvid=bvid,
@@ -255,9 +297,11 @@ async def _fetch_partition_top_videos(
                     description=str(item.get("description", ""))[:500],
                     url=f"https://www.bilibili.com/video/{bvid}",
                     comments=comments,
+                    tags=tags,
+                    comment_snapshots=comment_snapshots,
                 )
             )
-            console.print(f"[green]评论 {len(comments)} 条[/green]")
+            console.print(f"[green]评论 {len(comments)} 条，标签 {len(tags)} 个[/green]")
         except Exception as e:
             console.print(f"[red]失败: {e}[/red]")
         await _random_delay()

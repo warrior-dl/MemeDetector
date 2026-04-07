@@ -264,7 +264,7 @@ select,
 }
 
 .lower-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .runs-panel,
@@ -390,6 +390,16 @@ select {
   color: var(--success);
 }
 
+.badge.accepted {
+  background: rgba(45, 138, 89, 0.12);
+  color: var(--success);
+}
+
+.badge.rejected {
+  background: rgba(190, 61, 52, 0.12);
+  color: var(--danger);
+}
+
 .badge.failed {
   background: rgba(190, 61, 52, 0.12);
   color: var(--danger);
@@ -403,6 +413,11 @@ select {
 .badge.pending {
   background: rgba(183, 133, 23, 0.12);
   color: var(--gold);
+}
+
+.badge.processed {
+  background: rgba(45, 102, 151, 0.12);
+  color: var(--blue);
 }
 
 .table-wrap {
@@ -423,6 +438,18 @@ select {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.toolbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 249, 239, 0.72);
+  border: 1px solid rgba(79, 59, 37, 0.08);
+  color: var(--muted);
 }
 
 .secondary-button,
@@ -501,8 +528,88 @@ select {
   margin: 0 0 8px;
 }
 
+.detail-block p {
+  margin: 0;
+  line-height: 1.7;
+}
+
 .detail-block pre {
   max-height: 420px;
+}
+
+.inline-link {
+  color: var(--blue);
+}
+
+.comment-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.comment-item {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 249, 239, 0.85);
+  border: 1px solid rgba(79, 59, 37, 0.06);
+  line-height: 1.65;
+}
+
+.comment-thread {
+  display: grid;
+  gap: 12px;
+}
+
+.comment-card {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(79, 59, 37, 0.08);
+}
+
+.comment-copy {
+  margin: 10px 0 0;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.image-tile {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(255, 249, 239, 0.85);
+  border: 1px solid rgba(79, 59, 37, 0.06);
+  text-decoration: none;
+  color: var(--text);
+}
+
+.image-tile img,
+.image-empty {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 12px;
+  background: rgba(32, 24, 15, 0.06);
+}
+
+.image-empty {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.image-meta {
+  font-size: 0.82rem;
+  color: var(--muted);
 }
 
 table {

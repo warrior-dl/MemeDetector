@@ -11,6 +11,7 @@ const elements = {
   applyFilter: document.getElementById("applyFilter"),
   prevPage: document.getElementById("prevPage"),
   nextPage: document.getElementById("nextPage"),
+  agentFilter: document.getElementById("agentFilter"),
   statusFilter: document.getElementById("statusFilter"),
   runIdFilter: document.getElementById("runIdFilter"),
   wordFilter: document.getElementById("wordFilter"),
@@ -56,6 +57,10 @@ async function loadConversations() {
     const runId = elements.runIdFilter.value.trim();
     const word = elements.wordFilter.value.trim();
     const status = elements.statusFilter.value;
+    const agentName = elements.agentFilter.value;
+    if (agentName) {
+      params.set("agent_name", agentName);
+    }
     if (runId) {
       params.set("run_id", runId);
     }
@@ -116,6 +121,7 @@ function renderList() {
             <h3 class="run-title">${escapeHtml(item.word)}</h3>
             ${statusBadge(item.status)}
           </div>
+          <p class="run-meta">agent: <span class="mono">${escapeHtml(item.agent_name || "--")}</span></p>
           <p class="run-meta">run: <span class="mono">${escapeHtml(shortId(item.run_id))}</span></p>
           <p class="run-meta">${formatDateTime(item.started_at)} · ${item.message_count || 0} 条消息</p>
           <p class="run-meta">${escapeHtml(item.summary || "暂无摘要")}</p>

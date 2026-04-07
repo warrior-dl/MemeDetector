@@ -2,8 +2,8 @@
 
 自动发现并归档 B 站亚文化新梗的 AI Pipeline。
 
-每天采集高热分区视频元信息与评论，先把原始快照写入 DuckDB，再由 `Researcher` 在分析阶段判断候选词、完成溯源分析，最终入库到可全文检索的梗百科。
-`Scout` 只做评论和视频元数据采集，不调用 LLM；`Researcher` 会先从原始评论中提取候选词，再对评论关联视频显式调用 BibiGPT，把视频背景和评论一起交给 Agent 分析。超过 15 分钟的视频会自动跳过并缓存结果。
+每天采集高热分区视频元信息与评论，先把原始快照写入 DuckDB，再由 `Miner` 结合标题、简介、标签、视频内容和评论，对评论做“潜在梗 / 圈内知识”初筛，最后由 `Researcher` 做候选提取、联网搜索、溯源分析并入库到可全文检索的梗百科。
+`Scout` 只做评论和视频元数据采集，不调用 LLM；`Miner` 负责显式调用 BibiGPT 解析视频内容并给评论打分；`Researcher` 只消费 Miner 高价值线索做进一步搜索和解析。超过 15 分钟的视频会自动跳过并缓存结果。评论中的图片会额外下载到本地资产目录，并在 DuckDB 中保存元数据和关联关系，便于后续多模态分析与重跑。
 
 ## 快速开始
 
@@ -25,13 +25,18 @@ docker compose up -d
 # 4. 手动触发一次采集（写入原始视频/评论快照）
 python -m meme_detector scout
 
-# 5. 手动触发一次 AI 分析
+# 5. 手动触发一次 Miner 评论线索挖掘
+python -m meme_detector miner
+
+# 6. 手动触发一次 AI 分析
 python -m meme_detector research
 
-# 6. 启动 API 服务（含定时调度器）
+# 7. 启动 API 服务（含定时调度器）
 python -m meme_detector serve
 # 访问 http://localhost:8000/docs 查看接口文档
 # 访问 http://localhost:8000/admin 查看前端管理台
+# 访问 http://localhost:8000/admin/scout 查看 Scout 原始快照调试页
+# 访问 http://localhost:8000/admin/miner 查看 Miner 评论线索调试页
 # 访问 http://localhost:8000/admin/candidates 查看候选梗分页管理页
 # 访问 http://localhost:8000/admin/conversations 查看 Agent 对话记录页
 ```
@@ -58,16 +63,19 @@ docker compose --profile prod up -d
 B站视频元信息/评论
     │
     ▼
-[scout]  每日采集 → DuckDB 原始视频快照
+[scout]  每日采集 → DuckDB 原始视频 / 评论 / 图片快照
     │
-    ▼  (每周一)
-[researcher]  候选词提取 → DeepSeek 批量筛选 → 深度溯源 → URL验证
+    ▼
+[miner]  评论初筛 → BibiGPT 视频内容解析 → 评论线索评分
+    │
+    ▼
+[researcher]  候选词提取 → DeepSeek 批量筛选 → 联网搜索 → 深度溯源 → URL验证
     │
     ▼
 [Meilisearch]  梗库全文检索
     │
     ▼
-[FastAPI]  REST API
+[FastAPI]  REST API / Admin
 ```
 
 ## 目录
@@ -75,6 +83,7 @@ B站视频元信息/评论
 ```
 meme_detector/       # 源码包（各子目录含 README.md）
 ├── scout/           # 采集 + 原始快照入库
+├── miner/           # 视频内容解析 + 评论线索初筛
 ├── researcher/      # 候选提取 + AI 三步分析（快筛→深度→验证）
 ├── archivist/       # DuckDB 原始/候选存储 + Meilisearch 梗库
 └── api/             # FastAPI REST 接口

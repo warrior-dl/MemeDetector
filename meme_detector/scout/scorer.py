@@ -41,6 +41,8 @@ async def run_scout(target_date: date | None = None) -> dict:
                     "description": video.description,
                     "url": video.url,
                     "comments": comments,
+                    "tags": video.tags,
+                    "comment_snapshots": video.comment_snapshots,
                 }
             )
 

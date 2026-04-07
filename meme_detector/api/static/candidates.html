@@ -12,6 +12,8 @@
   <main class="shell">
     <nav class="top-nav">
       <a class="nav-link" href="/admin">总览</a>
+      <a class="nav-link" href="/admin/scout">Scout 原始数据</a>
+      <a class="nav-link" href="/admin/miner">Miner 评论线索</a>
       <a class="nav-link active" href="/admin/candidates">候选梗队列</a>
       <a class="nav-link" href="/admin/conversations">Agent 对话</a>
     </nav>
@@ -20,7 +22,7 @@
       <div>
         <p class="eyebrow">Candidate Queue</p>
         <h1>候选梗队列</h1>
-        <p class="hero-copy">分页查看全部候选梗的完整信息，包括状态、说明和评论样本。</p>
+        <p class="hero-copy">分页查看全部候选梗的完整信息，包括状态、说明、评论样本和来源线索入口。</p>
       </div>
       <div class="hero-actions">
         <button id="refreshButton" class="primary-button" type="button">刷新列表</button>
@@ -71,6 +73,7 @@
               <th>发现时间</th>
               <th>说明</th>
               <th>评论样本</th>
+              <th>来源线索</th>
             </tr>
           </thead>
           <tbody id="candidateRows"></tbody>

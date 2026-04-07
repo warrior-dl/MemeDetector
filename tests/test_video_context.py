@@ -1,7 +1,8 @@
 import pytest
+import httpx
 
 from meme_detector.archivist.duckdb_store import get_conn
-from meme_detector.researcher.video_context import get_bilibili_video_context
+from meme_detector.miner.video_context import get_bilibili_video_context
 
 
 @pytest.fixture
@@ -12,7 +13,7 @@ def video_context_db(tmp_path, monkeypatch):
         db_path,
     )
     monkeypatch.setattr(
-        "meme_detector.researcher.video_context.settings.bibigpt_max_duration_seconds",
+        "meme_detector.miner.video_context.settings.bibigpt_max_duration_seconds",
         900,
     )
     yield db_path
@@ -30,11 +31,11 @@ async def test_long_video_skips_bibigpt_and_caches(monkeypatch, video_context_db
         return {}
 
     monkeypatch.setattr(
-        "meme_detector.researcher.video_context._fetch_bilibili_video_info",
+        "meme_detector.miner.video_context._fetch_bilibili_video_info",
         fake_fetch_video_info,
     )
     monkeypatch.setattr(
-        "meme_detector.researcher.video_context._fetch_bibigpt_summary",
+        "meme_detector.miner.video_context._fetch_bibigpt_summary",
         fake_fetch_bibigpt_summary,
     )
 
@@ -79,15 +80,15 @@ async def test_bibigpt_result_cached_and_reused(monkeypatch, video_context_db):
         }
 
     monkeypatch.setattr(
-        "meme_detector.researcher.video_context._fetch_bilibili_video_info",
+        "meme_detector.miner.video_context._fetch_bilibili_video_info",
         fake_fetch_video_info,
     )
     monkeypatch.setattr(
-        "meme_detector.researcher.video_context._fetch_bibigpt_summary",
+        "meme_detector.miner.video_context._fetch_bibigpt_summary",
         fake_fetch_bibigpt_summary,
     )
     monkeypatch.setattr(
-        "meme_detector.researcher.video_context.settings.bibigpt_api_token",
+        "meme_detector.miner.video_context.settings.bibigpt_api_token",
         "token",
     )
 
@@ -99,3 +100,43 @@ async def test_bibigpt_result_cached_and_reused(monkeypatch, video_context_db):
     assert first["transcript_excerpt"] == "第一句字幕 第二句字幕"
     assert second["source"] == "cache"
     assert calls["api"] == 1
+
+
+@pytest.mark.asyncio
+async def test_bibigpt_timeout_returns_error_context_without_crashing(
+    monkeypatch,
+    video_context_db,
+):
+    async def fake_fetch_video_info(_bvid: str) -> dict:
+        return {"title": "超时视频", "desc": "本地简介", "duration": 300}
+
+    async def fake_fetch_bibigpt_summary(_url: str) -> dict:
+        raise httpx.ReadTimeout("timed out")
+
+    monkeypatch.setattr(
+        "meme_detector.miner.video_context._fetch_bilibili_video_info",
+        fake_fetch_video_info,
+    )
+    monkeypatch.setattr(
+        "meme_detector.miner.video_context._fetch_bibigpt_summary",
+        fake_fetch_bibigpt_summary,
+    )
+    monkeypatch.setattr(
+        "meme_detector.miner.video_context.settings.bibigpt_api_token",
+        "token",
+    )
+
+    result = await get_bilibili_video_context("BV123TIMEOUT")
+
+    assert result["status"] == "error"
+    assert result["skip_reason"] == "bibigpt_timeout"
+    assert result["description_text"] == "本地简介"
+    assert result["source"] == "local"
+    assert result["error"] == "timed out"
+
+    conn = get_conn()
+    cached = conn.execute(
+        "SELECT COUNT(*) FROM video_context_cache WHERE bvid = 'BV123TIMEOUT'"
+    ).fetchone()
+    conn.close()
+    assert cached == (0,)

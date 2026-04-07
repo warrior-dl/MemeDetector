@@ -1,13 +1,13 @@
 # researcher — AI 分析模块
 
-先从 Scout 原始评论中提取候选词，再执行 AI 分析，生成结构化的 `MemeRecord` 并写入梗库。
+优先从 Miner 产出的高价值评论线索中提取候选词，再执行 AI 分析，生成结构化的 `MemeRecord` 并写入梗库。
 
 ## 文件
 
 | 文件 | 职责 |
 |------|------|
 | `models.py`    | `MemeRecord`（词条完整模型）和 `QuickScreenResult`（快筛输出模型） |
-| `tools.py`     | 工具函数：B站搜索、Web 搜索（Serper）、URL 真实性验证 |
+| `tools.py`     | 工具函数：B站搜索、Web 搜索（火山引擎联网搜索）、URL 真实性验证 |
 | `agent.py`     | PydanticAI Agent 定义及三步主流程 |
 
 ## 触发方式
@@ -19,10 +19,10 @@
 
 ```
 Step 0  候选词提取
-        输入：全部未处理的 Scout 原始视频快照
+        输入：全部未处理的 Miner 评论线索（高价值优先）
         模型：DeepSeek-V3（JSON 模式，低温度）
         输出：候选词队列 { word, confidence, reason, related_bvids, sample_comments }
-        落库：写入 candidates 表，并将对应原始快照标记 processed
+        落库：写入 candidates 表，并将对应 Miner 线索标记 processed
 
 Step 1  批量快筛
         输入：全部 pending 候选词（最多 AI_BATCH_SIZE=50 个/批）
@@ -33,10 +33,11 @@ Step 1  批量快筛
 Step 2  深度分析（仅 Step1 通过的词）
         模型：DeepSeek-V3 via PydanticAI Agent
         主流程预取：
-          Scout 关联视频 → 显式调用 BibiGPT 获取视频背景（带 DuckDB 缓存，超 15 分钟跳过）
+          Miner 关联视频背景优先复用缓存，必要时补拉视频上下文（带 DuckDB 缓存，超 15 分钟跳过）
         Agent 可调用工具：
-          bilibili_search(word)         → 补充相关视频标题 / BV 号
-          web_search("[word] 梗 来源")  → 外部背景
+          bilibili_search(word)              → 补充相关视频标题 / BV 号
+          web_search_summary("[word] 梗 来源") → 先拿 AI 总结版搜索结果
+          web_search("[word] 梗 来源")        → 总结不够时再补普通网页结果
         输出：完整 MemeRecord（含 definition、origin、source_urls 等）
 
 Step 3  来源验证
@@ -51,8 +52,8 @@ Step 3  来源验证
 | 环境变量 | 用途 | 必填 |
 |----------|------|------|
 | `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | ✅ |
-| `SERPER_API_KEY` | Google Search via Serper.dev | 可选（缺失则跳过 Web 搜索） |
-| `BIBIGPT_API_TOKEN` | BibiGPT 视频总结 API | 可选（缺失则保留元数据，不做视频总结） |
+| `WEB_SEARCH_API_KEY` | 火山引擎联网搜索 API Key | 可选（缺失则跳过 Web 搜索） |
+| `BIBIGPT_API_TOKEN` | BibiGPT 视频总结 API | 可选（通常由 Miner 消费，缺失则仅保留基础元数据） |
 
 ## 幻觉防护
 

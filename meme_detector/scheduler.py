@@ -3,6 +3,7 @@ APScheduler 定时任务调度器。
 
 任务表：
 - 每日 02:05: Scout（采集 + 原始快照入库）
+- 每日 03:00: Miner（评论线索挖掘）
 - 每周一 06:00: Researcher（候选提取 + AI 分析 + 入库）
 """
 
@@ -36,6 +37,16 @@ def start_scheduler() -> None:
         misfire_grace_time=3600,
     )
 
+    # 每日 03:00 运行 Miner
+    _scheduler.add_job(
+        func=lambda: _run_async(_miner_job(trigger_mode="scheduled")),
+        trigger=CronTrigger(hour=3, minute=0, timezone="Asia/Shanghai"),
+        id="daily_miner",
+        name="每日评论线索挖掘",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
     # 每周一 06:00 运行 Researcher
     _scheduler.add_job(
         func=lambda: _run_async(_research_job(trigger_mode="scheduled")),
@@ -49,6 +60,7 @@ def start_scheduler() -> None:
     _scheduler.start()
     console.print("[bold green]调度器已启动[/bold green]")
     console.print("  - 每日 02:05 → Scout")
+    console.print("  - 每日 03:00 → Miner")
     console.print("  - 每周一 06:00 → Researcher")
 
 
@@ -74,6 +86,17 @@ async def _scout_job(trigger_mode: str = "scheduled") -> None:
         await execute_tracked_job("scout", run_scout, trigger_mode=trigger_mode)
     except Exception as e:
         console.print(f"[red]Scout 任务异常: {e}[/red]")
+
+
+async def _miner_job(trigger_mode: str = "scheduled") -> None:
+    from meme_detector.miner.scorer import run_miner
+    from meme_detector.run_tracker import execute_tracked_job
+
+    console.print("[bold]定时任务: Miner 开始[/bold]")
+    try:
+        await execute_tracked_job("miner", run_miner, trigger_mode=trigger_mode)
+    except Exception as e:
+        console.print(f"[red]Miner 任务异常: {e}[/red]")
 
 
 async def _research_job(trigger_mode: str = "scheduled") -> None:

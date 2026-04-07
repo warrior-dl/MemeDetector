@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MemeDetector Agent 对话</title>
+  <title>MemeDetector Miner 评论线索</title>
   <link rel="stylesheet" href="/admin-assets/admin.css" />
 </head>
 <body>
@@ -13,17 +13,17 @@
     <nav class="top-nav">
       <a class="nav-link" href="/admin">总览</a>
       <a class="nav-link" href="/admin/scout">Scout 原始数据</a>
-      <a class="nav-link" href="/admin/miner">Miner 评论线索</a>
+      <a class="nav-link active" href="/admin/miner">Miner 评论线索</a>
       <a class="nav-link" href="/admin/candidates">候选梗队列</a>
-      <a class="nav-link active" href="/admin/conversations">Agent 对话</a>
+      <a class="nav-link" href="/admin/conversations">Agent 对话</a>
     </nav>
 
     <header class="hero panel">
-        <div>
-          <p class="eyebrow">Agent Conversations</p>
-          <h1>Agent 对话记录</h1>
-          <p class="hero-copy">查看 Miner / Researcher 的完整上下文、调用消息和最终输出。</p>
-        </div>
+      <div>
+        <p class="eyebrow">Miner Comment Insights</p>
+        <h1>Miner 评论线索</h1>
+        <p class="hero-copy">查看 Miner 基于标题、简介、标签、视频内容和评论生成的初筛结果，用于调试评论打分与阈值策略。</p>
+      </div>
       <div class="hero-actions">
         <button id="refreshButton" class="primary-button" type="button">刷新数据</button>
         <p id="lastUpdated" class="meta-text">最近刷新：--</p>
@@ -34,28 +34,24 @@
       <div class="section-head section-head-tight">
         <div>
           <p class="section-kicker">Filters</p>
-          <h2>对话检索</h2>
+          <h2>评论线索检索</h2>
         </div>
         <div class="filters">
-          <select id="agentFilter">
-            <option value="">全部 Agent</option>
-            <option value="miner">Miner</option>
-            <option value="researcher">Researcher</option>
-          </select>
-          <input id="runIdFilter" class="input-field" type="text" placeholder="运行记录 ID" />
-          <input id="wordFilter" class="input-field" type="text" placeholder="词条关键字" />
           <select id="statusFilter">
             <option value="">全部状态</option>
-            <option value="success">成功</option>
-            <option value="failed">失败</option>
-            <option value="running">运行中</option>
+            <option value="pending">待消费</option>
+            <option value="processed">已消费</option>
           </select>
+          <input id="bvidFilter" class="input-field" type="text" placeholder="BVID" />
+          <input id="keywordFilter" class="input-field" type="text" placeholder="标题 / 评论 / 理由" />
         </div>
       </div>
 
       <div class="toolbar">
         <div class="toolbar-actions">
           <button id="applyFilter" class="secondary-button" type="button">应用筛选</button>
+          <label class="toolbar-toggle"><input id="onlyMeme" type="checkbox" /> 仅潜在梗</label>
+          <label class="toolbar-toggle"><input id="onlyInsider" type="checkbox" /> 仅圈内知识</label>
           <button id="prevPage" class="secondary-button" type="button">上一页</button>
           <button id="nextPage" class="secondary-button" type="button">下一页</button>
         </div>
@@ -64,21 +60,21 @@
 
       <div class="conversation-layout">
         <section class="panel">
-          <div id="conversationList" class="conversation-list"></div>
+          <div id="insightList" class="conversation-list"></div>
         </section>
         <section class="panel">
           <div class="section-head">
             <div>
               <p class="section-kicker">Detail</p>
-              <h2>对话详情</h2>
+              <h2>线索详情</h2>
             </div>
           </div>
-          <div id="conversationDetail" class="conversation-detail empty-state">选择左侧对话查看详情</div>
+          <div id="insightDetail" class="conversation-detail empty-state">选择左侧线索查看详情</div>
         </section>
       </div>
     </section>
   </main>
 
-  <script src="/admin-assets/conversations.js"></script>
+  <script src="/admin-assets/miner.js"></script>
 </body>
 </html>

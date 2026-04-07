@@ -37,11 +37,14 @@ candidates      -- 待 AI 审核的候选词队列
 meme_records    -- AI 确认的词条备份（Meilisearch 的镜像）
   id, title, alias, definition, origin, ...
 
-pipeline_runs   -- Scout / Researcher 任务运行记录
+pipeline_runs   -- Scout / Miner / Researcher 任务运行记录
   id, job_name, trigger_mode, status, started_at, finished_at, payload_json, ...
 
 video_context_cache  -- 视频内容背景缓存（BibiGPT + 元信息）
   bvid, video_url, title, status, duration_seconds, summary, content_text, ...
+
+miner_comment_insights  -- Miner 对评论的初步判定结果
+  insight_id, bvid, comment_text, confidence, is_meme_candidate, ...
 
 agent_conversations  -- Researcher 单词条 Agent 对话审计
   id, run_id, word, status, messages_json, output_json, error_message, ...
@@ -82,5 +85,6 @@ Meilisearch 的数据可以随时从 DuckDB 重建：
 - 超过 15 分钟的视频会标记为 `skipped` 并缓存跳过原因
 - Researcher 对每个候选词的完整上下文会写入 `agent_conversations`
 - Pipeline 任务执行摘要写入 `pipeline_runs`，便于管理台展示
+- Miner 评论打分结果写入 `miner_comment_insights`，便于重复调参和重跑
 
 数据文件位置：`data/duckdb/freq.db`

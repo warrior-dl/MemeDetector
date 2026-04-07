@@ -18,13 +18,16 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
 
-    # ── Web 搜索 ──
-    serper_api_key: str = ""
+    # ── Web 搜索（火山引擎联网搜索） ──
+    web_search_api_key: str = ""
+    web_search_timeout_seconds: float = 30.0
 
     # ── BibiGPT ──
     bibigpt_api_token: str = ""
     bibigpt_base_url: str = "https://api.bibigpt.co/api"
     bibigpt_max_duration_seconds: int = 900
+    bibigpt_request_timeout_seconds: float = 60.0
+    bibigpt_request_retries: int = 2
 
     # ── Meilisearch ──
     meili_url: str = "http://localhost:7700"
@@ -48,10 +51,15 @@ class Settings(BaseSettings):
     # ── AI 参数 ──
     ai_batch_size: int = 50
     ai_confidence_threshold: float = 0.65
+    miner_comment_confidence_threshold: float = 0.6
+    miner_comments_batch_size: int = 8
+    miner_llm_timeout_seconds: float = 90.0
+    miner_llm_max_retries: int = 1
 
     # ── 路径 ──
     duckdb_path: str = "data/duckdb/freq.db"
     userdict_path: str = "data/dicts/userdict.txt"
+    media_asset_root: str = "data/assets"
 
 
 # 全局单例

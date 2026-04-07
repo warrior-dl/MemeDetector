@@ -89,7 +89,7 @@ async function loadCandidates() {
     setLastUpdated();
   } catch (error) {
     elements.candidateRows.innerHTML = `
-      <tr><td colspan="7">${escapeHtml(error.message || String(error))}</td></tr>
+      <tr><td colspan="8">${escapeHtml(error.message || String(error))}</td></tr>
     `;
     elements.pageSummary.textContent = "加载失败";
   }
@@ -105,7 +105,7 @@ async function fetchJson(url) {
 
 function renderCandidates(items) {
   if (!items.length) {
-    elements.candidateRows.innerHTML = '<tr><td colspan="7">暂无候选数据</td></tr>';
+    elements.candidateRows.innerHTML = '<tr><td colspan="8">暂无候选数据</td></tr>';
     return;
   }
 
@@ -120,6 +120,9 @@ function renderCandidates(items) {
           <td>${formatDateTime(item.detected_at)}</td>
           <td class="long-text">${escapeHtml(item.explanation || "--")}</td>
           <td class="long-text">${escapeHtml(item.sample_comments || "--")}</td>
+          <td>
+            <a class="inline-link" href="/admin/candidate-sources?word=${encodeURIComponent(item.word)}">查看来源</a>
+          </td>
         </tr>
       `,
     )
