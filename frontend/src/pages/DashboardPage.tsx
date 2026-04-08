@@ -15,6 +15,7 @@ import { useCandidatesPage, useAgentConversations } from "../features/candidates
 import { useDashboardStats } from "../features/dashboard/hooks";
 import { useMemes } from "../features/library/hooks";
 import { useJobs, useRuns } from "../features/pipeline/hooks";
+import { useScoutRawVideosPage } from "../features/scout/hooks";
 import { PageSection } from "../ui/PageSection";
 import { CandidateStatusTag, ConversationStatusTag, RunStatusTag } from "../ui/StatusTags";
 import { formatOptionalDateTime } from "../utils/format";
@@ -26,6 +27,7 @@ export function DashboardPage() {
   const runsQuery = useRuns({ limit: 6 });
   const failedRunsQuery = useRuns({ status: "failed", limit: 6 });
   const jobsQuery = useJobs();
+  const scoutQuery = useScoutRawVideosPage({ limit: 6, offset: 0 });
   const failedConversationsQuery = useAgentConversations({ status: "failed", limit: 6, offset: 0 });
   const recentConversationsQuery = useAgentConversations({ limit: 6, offset: 0 });
 
@@ -134,6 +136,42 @@ export function DashboardPage() {
       </Row>
 
       <Row gutter={[20, 20]}>
+        <Col xs={24} xl={12}>
+          <PageSection title="最近 Scout 采集" subtitle="先确认原始视频和评论有没有被采到，再往下排查 Miner。">
+            {scoutQuery.error ? (
+              <Alert type="error" message="Scout 数据加载失败" description={String(scoutQuery.error)} />
+            ) : (
+              <List
+                dataSource={scoutQuery.data?.items ?? []}
+                locale={{ emptyText: <Empty description="暂无 Scout 采集数据" /> }}
+                renderItem={(item) => (
+                  <List.Item>
+                    <List.Item.Meta
+                      title={
+                        <Space wrap>
+                          <Typography.Text strong>{item.title || item.bvid}</Typography.Text>
+                          <Tag color={resolveScoutStageColor(item.pipeline_stage)}>
+                            {resolveScoutStageLabel(item.pipeline_stage)}
+                          </Tag>
+                        </Space>
+                      }
+                      description={
+                        <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                          <Typography.Text>
+                            {item.partition || "--"} · 评论 {item.comment_count ?? 0} · 图片 {item.picture_count ?? 0}
+                          </Typography.Text>
+                          <Typography.Text type="secondary">
+                            {item.first_comment || "暂无评论样本"}
+                          </Typography.Text>
+                        </Space>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            )}
+          </PageSection>
+        </Col>
         <Col xs={24} xl={12}>
           <PageSection title="待处理候选" subtitle="最适合收敛成一个候选工作台，不再拆散到多个页面。">
             <List
@@ -259,4 +297,30 @@ export function DashboardPage() {
       </Row>
     </Space>
   );
+}
+
+function resolveScoutStageLabel(stage?: string) {
+  if (stage === "researched") {
+    return "已进入 Research";
+  }
+  if (stage === "mined") {
+    return "已 Miner";
+  }
+  if (stage === "scouted") {
+    return "仅 Scout";
+  }
+  return "--";
+}
+
+function resolveScoutStageColor(stage?: string) {
+  if (stage === "researched") {
+    return "purple";
+  }
+  if (stage === "mined") {
+    return "cyan";
+  }
+  if (stage === "scouted") {
+    return "blue";
+  }
+  return "default";
 }

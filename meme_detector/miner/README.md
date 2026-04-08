@@ -67,7 +67,14 @@ Miner 现在是按视频增量落库的。
 
 | 环境变量 | 说明 |
 |----------|------|
-| `DEEPSEEK_API_KEY` | 评论初筛模型 |
+| `LLM_API_KEY` | 默认 OpenAI-compatible 模型配置 |
+| `LLM_BASE_URL` | 默认模型接口地址 |
+| `LLM_MODEL` | 默认模型名 |
+| `LLM_PROVIDER` | `auto/openai/deepseek/moonshotai`，默认 `auto` |
+| `MINER_LLM_API_KEY` | Miner 专属模型密钥，留空则继承 `LLM_API_KEY` |
+| `MINER_LLM_BASE_URL` | Miner 专属接口地址，留空则继承 `LLM_BASE_URL` |
+| `MINER_LLM_MODEL` | Miner 专属模型名，留空则继承 `LLM_MODEL` |
+| `MINER_LLM_PROVIDER` | Miner 专属 provider 提示，留空则继承 `LLM_PROVIDER` |
 | `BIBIGPT_API_TOKEN` | 视频内容解析 |
 | `MINER_COMMENT_CONFIDENCE_THRESHOLD` | 进入 Researcher 的最低线索阈值 |
 | `MINER_COMMENTS_BATCH_SIZE` | 单次送模型的评论批大小 |

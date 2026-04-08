@@ -29,13 +29,13 @@
 Step 0  候选词提取
         前置条件：不存在待 Miner 处理的视频
         输入：全部未处理的 Miner 评论线索（高价值优先）
-        模型：DeepSeek-V3（JSON 模式，低温度）
+        模型：Research LLM（JSON 模式，默认继承 `LLM_MODEL`）
         输出：候选词队列 { word, confidence, reason, related_bvids, sample_comments }
         落库：写入 candidates 表，并将对应 Miner 线索标记 processed
 
 Step 1  批量快筛
         输入：全部 pending 候选词（最多 AI_BATCH_SIZE=50 个/批）
-        模型：DeepSeek-V3（JSON 模式，低温度）
+        模型：Research LLM（JSON 模式，默认继承 `LLM_MODEL`）
         输出：QuickScreenResult { is_meme, confidence, reason }
         分流：
           is_meme=true 且 confidence ≥ AI_CONFIDENCE_THRESHOLD → 进入深度分析
@@ -46,7 +46,7 @@ Step 1  批量快筛
           若整批响应无法解析，会直接报错并打印原始响应摘要，避免静默结束
 
 Step 2  深度分析（仅 Step1 通过的词）
-        模型：DeepSeek / Kimi 等 OpenAI-compatible 模型，经 provider 适配后由 PydanticAI Agent 调用
+        模型：OpenAI-compatible 模型，经 PydanticAI + provider 工厂统一接入
         超时：RESEARCH_LLM_TIMEOUT_SECONDS，避免单词条无限阻塞
         主流程预取：
           Miner 关联视频背景优先复用缓存，必要时补拉视频上下文（带 DuckDB 缓存，超 15 分钟跳过）
@@ -85,7 +85,14 @@ ResearchRunResult(
 
 | 环境变量 | 用途 | 必填 |
 |----------|------|------|
-| `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | ✅ |
+| `LLM_API_KEY` | 默认 OpenAI-compatible API 密钥 | ✅ |
+| `LLM_BASE_URL` | 默认接口地址 | ✅ |
+| `LLM_MODEL` | 默认模型名 | ✅ |
+| `LLM_PROVIDER` | `auto/openai/deepseek/moonshotai` | 可选 |
+| `RESEARCH_LLM_API_KEY` | Research 专属密钥 | 可选 |
+| `RESEARCH_LLM_BASE_URL` | Research 专属接口地址 | 可选 |
+| `RESEARCH_LLM_MODEL` | Research 专属模型名 | 可选 |
+| `RESEARCH_LLM_PROVIDER` | Research 专属 provider 提示 | 可选 |
 | `WEB_SEARCH_API_KEY` | 火山引擎联网搜索 API Key | 可选（缺失则跳过 Web 搜索） |
 | `BIBIGPT_API_TOKEN` | BibiGPT 视频总结 API | 可选（通常由 Miner 消费，缺失则仅保留基础元数据） |
 
@@ -98,5 +105,11 @@ ResearchRunResult(
 
 ## 扩展：接入其他 LLM
 
-`deep_analysis.build_research_provider()` 会根据 `DEEPSEEK_MODEL` / `DEEPSEEK_BASE_URL` 自动选择兼容 provider。
-只需修改 `DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL` 即可切换到其他兼容服务（如 OpenAI、Moonshot / Kimi）。
+统一入口在 `meme_detector.llm_factory`：
+
+- 默认读取 `LLM_*`
+- `Researcher` 可通过 `RESEARCH_LLM_*` 单独覆盖
+- `LLM_PROVIDER/RESEARCH_LLM_PROVIDER` 支持 `auto/openai/deepseek/moonshotai`
+
+如果目标服务是标准 OpenAI-compatible 接口，通常只需要改 `*_LLM_BASE_URL` 和 `*_LLM_MODEL`。
+只有遇到特定 provider 的工具 / schema 兼容性差异时，才需要显式指定 `*_LLM_PROVIDER`。

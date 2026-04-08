@@ -13,10 +13,21 @@ class Settings(BaseSettings):
     bilibili_bili_jct: str = ""
     bilibili_buvid3: str = ""
 
-    # ── LLM ──
-    deepseek_api_key: str = ""
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
+    # ── LLM（OpenAI-compatible）──
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.deepseek.com"
+    llm_model: str = "deepseek-chat"
+    llm_provider: str = "auto"
+
+    miner_llm_api_key: str = ""
+    miner_llm_base_url: str = ""
+    miner_llm_model: str = ""
+    miner_llm_provider: str = ""
+
+    research_llm_api_key: str = ""
+    research_llm_base_url: str = ""
+    research_llm_model: str = ""
+    research_llm_provider: str = ""
 
     # ── Web 搜索（火山引擎联网搜索） ──
     web_search_api_key: str = ""

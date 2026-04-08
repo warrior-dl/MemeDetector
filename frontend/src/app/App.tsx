@@ -6,6 +6,9 @@ import { AppShell } from "./AppShell";
 const DashboardPage = lazy(() =>
   import("../pages/DashboardPage").then((module) => ({ default: module.DashboardPage })),
 );
+const ScoutPage = lazy(() =>
+  import("../pages/ScoutPage").then((module) => ({ default: module.ScoutPage })),
+);
 const CandidatesPage = lazy(() =>
   import("../pages/CandidatesPage").then((module) => ({ default: module.CandidatesPage })),
 );
@@ -22,6 +25,7 @@ export default function App() {
       <Route element={<AppShell />}>
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<PageLoader><DashboardPage /></PageLoader>} />
+        <Route path="/scout" element={<PageLoader><ScoutPage /></PageLoader>} />
         <Route path="/candidates" element={<PageLoader><CandidatesPage /></PageLoader>} />
         <Route path="/library" element={<PageLoader><LibraryPage /></PageLoader>} />
         <Route path="/pipeline" element={<PageLoader><PipelinePage /></PageLoader>} />

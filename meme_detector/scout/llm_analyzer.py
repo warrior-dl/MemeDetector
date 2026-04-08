@@ -6,10 +6,9 @@ from __future__ import annotations
 
 import json
 
-from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from meme_detector.config import settings
+from meme_detector.llm_factory import build_async_openai_client, resolve_llm_config
 from meme_detector.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -47,16 +46,14 @@ _SYSTEM_PROMPT = """\
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def _extract_memes_from_batch(comments: list[str]) -> list[dict]:
     """对一批评论调用 LLM，提取梗候选。"""
-    client = AsyncOpenAI(
-        api_key=settings.deepseek_api_key,
-        base_url=settings.deepseek_base_url,
-    )
+    client = build_async_openai_client()
+    llm_config = resolve_llm_config()
 
     comment_text = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(comments))
     user_msg = f"以下是来自B站的高赞评论，请识别其中正在传播的梗：\n\n{comment_text}"
 
     resp = await client.chat.completions.create(
-        model=settings.deepseek_model,
+        model=llm_config.model,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},

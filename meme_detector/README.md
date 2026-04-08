@@ -49,7 +49,7 @@ python -m meme_detector research
 [researcher] 优先消费未处理的 miner_comment_insights
     └─▶ Step0: 从高价值评论线索提取候选词 → 写入 candidates 表
         └─▶ 读取 candidates（status=pending）
-    └─▶ Step1: DeepSeek 批量快筛
+    └─▶ Step1: OpenAI-compatible LLM 批量快筛
         └─▶ Step2: 主流程预取视频背景 + Agent 深度分析（仅高置信度）
             ├─▶ volcengine_web_search_summary 先拿火山引擎总结版外部搜索上下文
             ├─▶ volcengine_web_search 仅在总结不足时补火山引擎普通网页结果
@@ -66,6 +66,11 @@ python -m meme_detector research
 
 所有配置通过环境变量注入，参见根目录 `.env.example`。
 `config.py` 中的 `settings` 对象为全局单例，各模块直接 `from meme_detector.config import settings` 使用。
+
+LLM 配置采用两级覆盖：
+
+- `LLM_*`：默认模型，供未单独指定的模块继承
+- `MINER_LLM_*` / `RESEARCH_LLM_*`：按 pipeline 覆盖
 
 ## 运行审计与管理
 

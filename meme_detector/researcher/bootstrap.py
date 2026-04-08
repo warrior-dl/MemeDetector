@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 
-from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from meme_detector.archivist.duckdb_store import (
@@ -18,6 +17,7 @@ from meme_detector.archivist.duckdb_store import (
     upsert_scout_candidates,
 )
 from meme_detector.config import settings
+from meme_detector.llm_factory import build_async_openai_client, resolve_llm_config
 from meme_detector.logging_utils import get_logger
 from meme_detector.researcher.models import CandidateSeed
 
@@ -61,10 +61,8 @@ async def extract_candidate_seeds(
     if not scout_videos:
         return []
 
-    client = AsyncOpenAI(
-        api_key=settings.deepseek_api_key,
-        base_url=settings.deepseek_base_url,
-    )
+    client = build_async_openai_client("research")
+    llm_config = resolve_llm_config("research")
 
     chunks = [
         scout_videos[i : i + 12]
@@ -103,7 +101,7 @@ async def extract_candidate_seeds(
 
         user_msg = "请从以下 Scout 原始采集内容中提取候选梗词：\n\n" + "\n\n".join(payload_lines)
         resp = await client.chat.completions.create(
-            model=settings.deepseek_model,
+            model=llm_config.model,
             messages=[
                 {"role": "system", "content": _CANDIDATE_EXTRACTION_SYSTEM},
                 {"role": "user", "content": user_msg},

@@ -3,6 +3,7 @@ import {
   DatabaseOutlined,
   DotChartOutlined,
   RadarChartOutlined,
+  VideoCameraOutlined,
 } from "@ant-design/icons";
 import { Badge, Button, Layout, Menu, Space, Typography } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -12,6 +13,7 @@ const { Header, Sider, Content } = Layout;
 
 const navigationItems = [
   { key: "/dashboard", icon: <RadarChartOutlined />, label: "Dashboard" },
+  { key: "/scout", icon: <VideoCameraOutlined />, label: "Scout 采集" },
   { key: "/candidates", icon: <DotChartOutlined />, label: "候选工作台" },
   { key: "/library", icon: <DatabaseOutlined />, label: "梗库" },
   { key: "/pipeline", icon: <ApartmentOutlined />, label: "Pipeline" },
@@ -121,6 +123,9 @@ export function AppShell() {
 function resolvePageTitle(pathname: string) {
   if (pathname.startsWith("/candidates")) {
     return "候选工作台";
+  }
+  if (pathname.startsWith("/scout")) {
+    return "Scout 采集";
   }
   if (pathname.startsWith("/library")) {
     return "梗库";

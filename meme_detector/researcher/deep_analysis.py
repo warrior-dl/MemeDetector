@@ -21,6 +21,7 @@ from meme_detector.archivist.duckdb_store import (
     get_conn,
 )
 from meme_detector.config import settings
+from meme_detector.llm_factory import build_openai_chat_model, build_provider
 from meme_detector.logging_utils import get_logger
 from meme_detector.miner.video_context import get_bilibili_video_context
 from meme_detector.researcher.models import MemeRecord
@@ -39,31 +40,19 @@ def build_research_provider(
     model_name: str,
     base_url: str,
 ) -> OpenAIProvider | DeepSeekProvider | MoonshotAIProvider:
-    normalized_model = model_name.strip().lower()
-    normalized_base_url = base_url.strip().lower()
-
-    if normalized_model.startswith("kimi") or "moonshot" in normalized_base_url:
-        return MoonshotAIProvider(openai_client=client)
-    if normalized_model.startswith("deepseek") or "deepseek" in normalized_base_url:
-        return DeepSeekProvider(openai_client=client)
-    return OpenAIProvider(openai_client=client)
+    return build_provider(
+        client=client,
+        model_name=model_name,
+        base_url=base_url,
+        provider_hint="auto",
+    )
 
 
 def get_research_model() -> OpenAIChatModel:
-    client = AsyncOpenAI(
-        api_key=settings.deepseek_api_key,
-        base_url=settings.deepseek_base_url,
+    return build_openai_chat_model(
+        "research",
         timeout=settings.research_llm_timeout_seconds,
-        max_retries=max(settings.research_llm_max_retries, 0),
-    )
-    provider = build_research_provider(
-        client=client,
-        model_name=settings.deepseek_model,
-        base_url=settings.deepseek_base_url,
-    )
-    return OpenAIChatModel(
-        settings.deepseek_model,
-        provider=provider,
+        max_retries=settings.research_llm_max_retries,
     )
 
 

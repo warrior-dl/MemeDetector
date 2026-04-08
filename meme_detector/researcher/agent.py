@@ -1,7 +1,7 @@
 """
 AI 分析模块：三步流程对候选词进行梗识别和溯源。
 
-Step 1: DeepSeek 批量快速筛选（低成本）
+Step 1: OpenAI-compatible LLM 批量快速筛选（低成本）
 Step 2: 深度分析 + 工具调用（仅高置信度候选词）
 Step 3: 来源 URL 验证（防幻觉）
 """

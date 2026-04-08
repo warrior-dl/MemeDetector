@@ -1,5 +1,4 @@
-data/duckdb/
-data/meili/
+data
 logs/
 .env
 __pycache__/

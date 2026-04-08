@@ -15,6 +15,7 @@ from meme_detector.archivist.duckdb_store import (
     get_conn,
 )
 from meme_detector.config import settings
+from meme_detector.llm_factory import build_async_openai_client, resolve_llm_config
 from meme_detector.logging_utils import get_logger
 from meme_detector.miner.models import CommentInsightResult
 from meme_detector.miner.video_context import get_bilibili_video_context
@@ -55,12 +56,13 @@ async def score_video_comments(video: dict, comments: list[str]) -> list[dict]:
     conversation_id = create_miner_conversation(video)
     conversation_messages: list[dict] = []
     context = await get_bilibili_video_context(str(video.get("bvid", "")).strip())
-    client = AsyncOpenAI(
-        api_key=settings.deepseek_api_key,
-        base_url=settings.deepseek_base_url,
+    client = build_async_openai_client(
+        "miner",
         timeout=settings.miner_llm_timeout_seconds,
-        max_retries=max(settings.miner_llm_max_retries, 0),
+        max_retries=settings.miner_llm_max_retries,
+        client_cls=AsyncOpenAI,
     )
+    llm_config = resolve_llm_config("miner")
 
     chunks = [
         comments[i : i + settings.miner_comments_batch_size]
@@ -90,6 +92,7 @@ async def score_video_comments(video: dict, comments: list[str]) -> list[dict]:
                 raw = await request_chunk_comment_scores(
                     client=client,
                     user_msg=user_msg,
+                    model_name=llm_config.model,
                 )
                 conversation_messages.append(
                     {
@@ -181,9 +184,10 @@ async def request_chunk_comment_scores(
     *,
     client: AsyncOpenAI,
     user_msg: str,
+    model_name: str,
 ) -> str:
     resp = await client.chat.completions.create(
-        model=settings.deepseek_model,
+        model=model_name,
         messages=[
             {"role": "system", "content": _MINER_SYSTEM},
             {"role": "user", "content": user_msg},

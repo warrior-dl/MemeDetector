@@ -5,6 +5,7 @@
 ## 页面结构
 
 - `Dashboard`: 查看候选总量、梗库数量和整体运行概况
+- `Scout 采集`: 查看原始视频快照、评论样本和评论图片资产
 - `候选工作台`: 筛选候选词，查看来源线索、关联视频、Researcher 对话，并执行人工审核
 - `梗库`: 查看已入库词条
 - `Pipeline`: 查看调度任务和运行记录
@@ -15,6 +16,7 @@
 - 数据层按 feature 拆分，不再使用单一中央 `hooks.ts`
 - 当前 feature hooks 目录：
   - `src/features/dashboard/hooks.ts`
+  - `src/features/scout/hooks.ts`
   - `src/features/candidates/hooks.ts`
   - `src/features/library/hooks.ts`
   - `src/features/pipeline/hooks.ts`

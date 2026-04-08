@@ -20,7 +20,7 @@
 基础设施跑在 Docker，app 在宿主机直接运行，方便断点调试。
 
 ```bash
-# 1. 复制配置，填入 B站 Cookie 和 DeepSeek API Key
+# 1. 复制配置，填入 B站 Cookie 和默认 LLM 的 OpenAI-compatible API Key
 cp .env.example .env
 # 确认 .env 中 MEILI_URL=http://localhost:7700
 
@@ -85,6 +85,13 @@ tail -f logs/app.jsonl
 rg 'research_candidate_failed|pipeline_run_failed|run_id' logs/app.jsonl
 ```
 
+### LLM 配置
+
+- `LLM_*` 是全局默认模型配置
+- `MINER_LLM_*` 和 `RESEARCH_LLM_*` 可分别覆盖各自 pipeline
+- 默认通过 `pydantic_ai + openai-python` 接入 OpenAI-compatible 模型
+- `*_LLM_PROVIDER` 支持 `auto/openai/deepseek/moonshotai`
+
 ### 生产部署（全容器化）
 
 ```bash
@@ -113,7 +120,7 @@ B站视频元信息/评论
 [miner]  评论初筛 → BibiGPT 视频内容解析 → 评论线索评分
     │
     ▼
-[researcher]  候选词提取 → DeepSeek 批量筛选 → 联网搜索 → 深度溯源 → URL验证
+[researcher]  候选词提取 → LLM 批量快筛 → 联网搜索 → 深度溯源 → URL验证
     │
     ▼
 [Meilisearch]  梗库全文检索
@@ -162,7 +169,7 @@ tests/               # 单元测试
 | 用途 | 选型 |
 |------|------|
 | 数据采集 | bilibili-api (Nemo2011 fork) |
-| AI 框架 | PydanticAI + DeepSeek-V3 |
+| AI 框架 | PydanticAI + OpenAI-compatible LLM |
 | 原始/候选存储 | DuckDB |
 | 梗库检索 | Meilisearch |
 | API 服务 | FastAPI + Uvicorn |

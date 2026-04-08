@@ -167,6 +167,79 @@ export interface CandidateVerifyResponse {
   status: string;
 }
 
+export interface ScoutRawVideoSummary {
+  bvid: string;
+  collected_date: string;
+  partition?: string;
+  title?: string;
+  video_url?: string;
+  tags?: string[];
+  comment_count?: number;
+  miner_status?: string;
+  miner_processed_at?: string | null;
+  candidate_status?: string;
+  candidate_extracted_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  first_comment?: string;
+  picture_count?: number;
+  pipeline_stage?: string;
+}
+
+export interface ScoutRawVideosPageParams {
+  candidateStatus?: string;
+  partition?: string;
+  keyword?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ScoutRawVideosPageResponse {
+  items: ScoutRawVideoSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ScoutMediaAsset {
+  asset_id: string;
+  source_url?: string;
+  storage_path?: string;
+  width?: number | null;
+  height?: number | null;
+  byte_size?: number | null;
+  download_status?: string;
+  mime_type?: string;
+  file_ext?: string;
+  image_index?: number;
+}
+
+export interface ScoutCommentSnapshot {
+  rpid: number;
+  root_rpid?: number | null;
+  parent_rpid?: number | null;
+  mid?: number | null;
+  uname?: string;
+  message?: string;
+  like_count?: number;
+  reply_count?: number;
+  ctime?: string | null;
+  picture_count?: number;
+  has_pictures?: boolean;
+  content?: unknown;
+  raw_reply?: unknown;
+  created_at?: string;
+  updated_at?: string;
+  pictures?: ScoutMediaAsset[];
+}
+
+export interface ScoutRawVideoDetail extends ScoutRawVideoSummary {
+  description?: string;
+  comments?: string[];
+  comment_snapshots?: ScoutCommentSnapshot[];
+  comments_with_pictures?: number;
+}
+
 export interface TriggerJobResponse {
   job_name: string;
   started: boolean;

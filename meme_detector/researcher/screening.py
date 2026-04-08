@@ -7,10 +7,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from meme_detector.config import settings
+from meme_detector.llm_factory import build_async_openai_client, resolve_llm_config
 from meme_detector.logging_utils import get_logger
 from meme_detector.researcher.models import QuickScreenResult
 
@@ -45,12 +45,12 @@ async def batch_screen(
     candidates: list[dict],
 ) -> list[QuickScreenResult]:
     """批量快速筛选，每批最多 AI_BATCH_SIZE 个词。"""
-    client = AsyncOpenAI(
-        api_key=settings.deepseek_api_key,
-        base_url=settings.deepseek_base_url,
+    client = build_async_openai_client(
+        "research",
         timeout=settings.research_screen_timeout_seconds,
-        max_retries=max(settings.research_screen_max_retries, 0),
+        max_retries=settings.research_screen_max_retries,
     )
+    llm_config = resolve_llm_config("research")
 
     word_list = []
     for candidate in candidates:
@@ -66,7 +66,7 @@ async def batch_screen(
     )
 
     resp = await client.chat.completions.create(
-        model=settings.deepseek_model,
+        model=llm_config.model,
         messages=[
             {"role": "system", "content": _SCREEN_SYSTEM},
             {"role": "user", "content": user_msg},
