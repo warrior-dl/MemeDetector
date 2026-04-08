@@ -9,6 +9,7 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.responses import FileResponse
 
 from meme_detector.archivist.duckdb_store import (
@@ -26,6 +27,7 @@ from meme_detector.archivist.duckdb_store import (
     get_scout_raw_videos_page,
     list_agent_conversations,
     list_pipeline_runs,
+    update_scout_raw_video_stage,
     update_candidate_status,
 )
 from meme_detector.archivist.meili_store import (
@@ -41,6 +43,11 @@ from meme_detector.pipeline_service import (
 from meme_detector.scheduler import get_scheduler_jobs
 
 router = APIRouter()
+
+
+class ScoutRawVideoStageUpdateRequest(BaseModel):
+    collected_date: date
+    stage: str
 
 
 def _run_with_conn(callback):
@@ -123,6 +130,30 @@ async def get_scout_raw_video_detail(
     )
     if not snapshot:
         raise HTTPException(status_code=404, detail=f"原始快照 '{bvid}@{collected_date}' 不存在")
+    return snapshot
+
+
+@router.post("/scout/raw-videos/{bvid}/stage", summary="手动更新 Scout 原始视频阶段")
+async def set_scout_raw_video_stage(
+    bvid: str,
+    payload: ScoutRawVideoStageUpdateRequest,
+) -> dict:
+    if payload.stage not in {"scouted", "mined", "researched"}:
+        raise HTTPException(status_code=400, detail="stage 必须为 scouted、mined 或 researched")
+
+    snapshot = _run_with_conn(
+        lambda conn: update_scout_raw_video_stage(
+            conn,
+            bvid=bvid,
+            collected_date=payload.collected_date,
+            stage=payload.stage,
+        )
+    )
+    if not snapshot:
+        raise HTTPException(
+            status_code=404,
+            detail=f"原始快照 '{bvid}@{payload.collected_date}' 不存在",
+        )
     return snapshot
 
 

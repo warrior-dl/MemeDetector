@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import logging
 from contextvars import ContextVar, Token
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,40 @@ from meme_detector.config import settings
 _LOG_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("log_context", default={})
 _LOGGING_CONFIGURED = False
 _RESERVED_RECORD_ATTRS = set(logging.makeLogRecord({}).__dict__.keys())
+_PRIMARY_LOG_FIELD_KEYS = (
+    "event",
+    "job_name",
+    "run_id",
+    "trigger_mode",
+    "target_date",
+    "partition_name",
+    "video_index",
+    "video_total",
+    "batch_index",
+    "batch_total",
+    "chunk_index",
+    "word",
+    "bvid",
+    "conversation_id",
+    "candidate_count",
+    "pending_count",
+    "video_count",
+    "comment_count",
+    "result_count",
+    "high_value_count",
+    "accepted_count",
+    "rejected_count",
+    "failed_count",
+    "source_count",
+    "valid_source_count",
+    "retry_index",
+    "retry_limit",
+    "retry_delay_seconds",
+    "page",
+    "model_name",
+    "provider",
+    "status",
+)
 
 
 class LogContextFilter(logging.Filter):
@@ -33,32 +67,14 @@ class LogContextFilter(logging.Filter):
 class JsonLogFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
             "module": record.module,
             "line": record.lineno,
         }
-        for key in (
-            "event",
-            "job_name",
-            "run_id",
-            "trigger_mode",
-            "word",
-            "bvid",
-            "conversation_id",
-            "chunk_index",
-            "candidate_count",
-            "raw_summary",
-            "result_count",
-            "accepted_count",
-            "rejected_count",
-            "failed_count",
-        ):
-            value = getattr(record, key, None)
-            if value not in (None, ""):
-                payload[key] = value
+        payload.update(_collect_record_fields(record))
 
         extras = {
             key: value
@@ -73,6 +89,21 @@ class JsonLogFormatter(logging.Formatter):
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+class ConsoleLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        message = record.getMessage()
+        fields = _collect_record_fields(record)
+        fields.pop("event", None)
+        if not fields:
+            return message
+
+        rendered = " ".join(
+            f"{key}={_format_console_value(value)}"
+            for key, value in fields.items()
+        )
+        return f"{message} [{rendered}]"
 
 
 def setup_logging() -> None:
@@ -98,7 +129,7 @@ def setup_logging() -> None:
         markup=True,
     )
     console_handler.setLevel(log_level)
-    console_handler.setFormatter(logging.Formatter("%(message)s"))
+    console_handler.setFormatter(ConsoleLogFormatter())
     console_handler.addFilter(context_filter)
 
     file_handler = RotatingFileHandler(
@@ -115,11 +146,16 @@ def setup_logging() -> None:
     root_logger.addHandler(file_handler)
     logging.captureWarnings(True)
 
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
+    for name in ("uvicorn", "uvicorn.error", "fastapi"):
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.propagate = True
         logger.setLevel(log_level)
+
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.handlers.clear()
+    access_logger.propagate = False
+    access_logger.disabled = True
 
     _LOGGING_CONFIGURED = True
     get_logger(__name__).info(
@@ -149,3 +185,28 @@ def reset_log_context(token: Token) -> None:
 
 def clear_log_context() -> None:
     _LOG_CONTEXT.set({})
+
+
+def _collect_record_fields(record: logging.LogRecord) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key in _PRIMARY_LOG_FIELD_KEYS:
+        value = getattr(record, key, None)
+        if value not in (None, ""):
+            payload[key] = value
+
+    for key, value in record.__dict__.items():
+        if key in _RESERVED_RECORD_ATTRS or key in payload or key.startswith("_"):
+            continue
+        if value in (None, ""):
+            continue
+        payload[key] = value
+    return payload
+
+
+def _format_console_value(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    text = str(value)
+    if len(text) > 60:
+        return text[:57] + "..."
+    return text

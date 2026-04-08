@@ -17,7 +17,12 @@ from meme_detector.archivist.duckdb_store import (
     upsert_scout_candidates,
 )
 from meme_detector.config import settings
-from meme_detector.llm_factory import build_async_openai_client, resolve_llm_config
+from meme_detector.llm_factory import (
+    build_async_openai_client,
+    load_json_response,
+    request_json_chat_completion,
+    resolve_llm_config,
+)
 from meme_detector.logging_utils import get_logger
 from meme_detector.researcher.models import CandidateSeed
 
@@ -68,9 +73,28 @@ async def extract_candidate_seeds(
         scout_videos[i : i + 12]
         for i in range(0, len(scout_videos), 12)
     ]
+    logger.info(
+        "research candidate extraction prepared",
+        extra={
+            "event": "research_candidate_extraction_prepared",
+            "video_count": len(scout_videos),
+            "batch_total": len(chunks),
+            "model_name": llm_config.model,
+            "provider": llm_config.provider,
+        },
+    )
     merged: dict[str, dict] = {}
 
-    for chunk in chunks:
+    for chunk_index, chunk in enumerate(chunks):
+        logger.info(
+            "research candidate extraction chunk started",
+            extra={
+                "event": "research_candidate_extraction_chunk_started",
+                "chunk_index": chunk_index,
+                "batch_total": len(chunks),
+                "video_count": len(chunk),
+            },
+        )
         payload_lines = []
         for video in chunk:
             comments = video.get("comments", [])
@@ -100,23 +124,23 @@ async def extract_candidate_seeds(
             )
 
         user_msg = "请从以下 Scout 原始采集内容中提取候选梗词：\n\n" + "\n\n".join(payload_lines)
-        resp = await client.chat.completions.create(
-            model=llm_config.model,
+        raw = await request_json_chat_completion(
+            client=client,
+            model_name=llm_config.model,
             messages=[
                 {"role": "system", "content": _CANDIDATE_EXTRACTION_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            response_format={"type": "json_object"},
         )
-
-        raw = resp.choices[0].message.content or "{}"
-        data = json.loads(raw)
+        data = load_json_response(raw)
         items = data if isinstance(data, list) else data.get("results", [])
+        parsed_count = 0
         for item in items:
             try:
                 seed = CandidateSeed(**item)
             except Exception:
                 continue
+            parsed_count += 1
             existing = merged.get(seed.word)
             if not existing or existing["confidence"] < seed.confidence:
                 merged[seed.word] = seed.model_dump()
@@ -135,6 +159,16 @@ async def extract_candidate_seeds(
                         ]
                     )
                 )[:5]
+        logger.info(
+            "research candidate extraction chunk completed",
+            extra={
+                "event": "research_candidate_extraction_chunk_completed",
+                "chunk_index": chunk_index,
+                "batch_total": len(chunks),
+                "result_count": parsed_count,
+                "candidate_count": len(merged),
+            },
+        )
 
     return materialize_candidate_seeds(list(merged.values()), scout_videos)
 
@@ -263,6 +297,13 @@ async def bootstrap_candidates_from_miner() -> list[dict]:
                     "video_count": len(pending_videos),
                 },
             )
+        else:
+            logger.info(
+                "research bootstrap found no pending miner insights",
+                extra={
+                    "event": "research_bootstrap_no_pending_insights",
+                },
+            )
         return []
 
     high_value_insights = [
@@ -280,6 +321,14 @@ async def bootstrap_candidates_from_miner() -> list[dict]:
         },
     )
     grouped_videos = group_miner_insights_by_video(high_value_insights)
+    logger.info(
+        "research bootstrap grouped miner insights",
+        extra={
+            "event": "research_bootstrap_grouped_insights",
+            "video_count": len(grouped_videos),
+            "comment_count": sum(len(item.get("comments", [])) for item in grouped_videos),
+        },
+    )
     candidates = await extract_candidate_seeds(grouped_videos)
 
     touched_videos = [
@@ -297,6 +346,8 @@ async def bootstrap_candidates_from_miner() -> list[dict]:
         extra={
             "event": "research_bootstrap_completed",
             "candidate_count": len(candidates),
+            "video_count": len(grouped_videos),
+            "result_count": len(candidates),
         },
     )
     return candidates

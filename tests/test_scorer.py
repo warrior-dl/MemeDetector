@@ -15,7 +15,7 @@ from meme_detector.archivist.duckdb_store import (
     upsert_word_freq,
 )
 from meme_detector.scout.collector import VideoTexts
-from meme_detector.scout.scorer import run_scout
+from meme_detector.scout.scorer import _flatten_partition_videos, run_scout
 
 
 @pytest.fixture
@@ -173,3 +173,43 @@ async def test_run_scout_persists_raw_video_snapshots(tmp_path, monkeypatch):
     assert target["tags"] == ["依托答辩", "抽象"]
     assert target["comments"] == ["这也太依托答辩了", "依托答辩名场面"]
     assert pending == []
+
+
+def test_flatten_partition_videos_deduplicates_same_bvid_comments_and_snapshots():
+    flattened, total_comments = _flatten_partition_videos(
+        {
+            "鬼畜": [
+                VideoTexts(
+                    bvid="BV1MERGE01",
+                    partition="鬼畜",
+                    title="重复视频",
+                    description="desc",
+                    url="https://www.bilibili.com/video/BV1MERGE01",
+                    comments=["第一条评论", "第二条评论"],
+                    tags=["抽象"],
+                    comment_snapshots=[
+                        {"rpid": 1001, "message": "第一条评论"},
+                    ],
+                ),
+                VideoTexts(
+                    bvid="BV1MERGE01",
+                    partition="鬼畜",
+                    title="重复视频",
+                    description="desc",
+                    url="https://www.bilibili.com/video/BV1MERGE01",
+                    comments=["第二条评论", "第三条评论"],
+                    tags=["鬼畜", "抽象"],
+                    comment_snapshots=[
+                        {"rpid": 1001, "message": "第一条评论"},
+                        {"rpid": 1002, "message": "第三条评论"},
+                    ],
+                ),
+            ]
+        }
+    )
+
+    assert len(flattened) == 1
+    assert total_comments == 3
+    assert flattened[0]["comments"] == ["第一条评论", "第二条评论", "第三条评论"]
+    assert flattened[0]["tags"] == ["抽象", "鬼畜"]
+    assert [item["rpid"] for item in flattened[0]["comment_snapshots"]] == [1001, 1002]

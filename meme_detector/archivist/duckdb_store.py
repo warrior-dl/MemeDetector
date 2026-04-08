@@ -16,6 +16,9 @@ from uuid import uuid4
 import duckdb
 
 from meme_detector.config import settings
+from meme_detector.logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 _CREATE_WORD_FREQ = """
 CREATE TABLE IF NOT EXISTS word_freq (
@@ -307,110 +310,302 @@ def upsert_scout_raw_videos(
     conn: duckdb.DuckDBPyConnection,
     videos: list[dict],
     target_date: date,
-) -> None:
+) -> dict:
     """批量写入 Scout 采集到的视频元信息和评论快照。"""
+    stats = {
+        "input_count": len(videos),
+        "prepared_count": 0,
+        "inserted_count": 0,
+        "updated_count": 0,
+        "same_day_unchanged_count": 0,
+        "cross_day_duplicate_count": 0,
+        "persisted_count": 0,
+        "invalid_count": 0,
+    }
     if not videos:
-        return
+        return stats
 
     rows = []
     structured_videos: list[dict] = []
     now = datetime.now()
     for video in videos:
-        comments = video.get("comments", [])
-        if not isinstance(comments, list):
-            comments = []
-        comments = [str(comment).strip() for comment in comments if str(comment).strip()]
-        comment_snapshots = video.get("comment_snapshots", [])
-        if not isinstance(comment_snapshots, list):
-            comment_snapshots = []
-        structured_videos.append(
-            {
-                "bvid": str(video.get("bvid", "")).strip(),
-                "partition": str(video.get("partition", "")).strip(),
-                "title": str(video.get("title", "")).strip(),
-                "description": str(video.get("description", "")).strip(),
-                "url": str(video.get("url", "")).strip(),
-                "tags": [
-                    str(tag).strip()
-                    for tag in (video.get("tags", []) or [])
-                    if str(tag).strip()
-                ],
-                "comments": comments,
-                "comment_snapshots": comment_snapshots,
-            }
-        )
+        prepared = _prepare_scout_video_payload(video)
+        if not prepared["bvid"] or not prepared["partition"] or not prepared["url"]:
+            stats["invalid_count"] += 1
+            continue
+        structured_videos.append(prepared)
+        stats["prepared_count"] += 1
         rows.append(
             (
-                str(video.get("bvid", "")).strip(),
+                prepared["bvid"],
                 target_date,
-                str(video.get("partition", "")).strip(),
-                str(video.get("title", "")).strip(),
-                str(video.get("description", "")).strip(),
-                str(video.get("url", "")).strip(),
-                json.dumps(
-                    [
-                        str(tag).strip()
-                        for tag in (video.get("tags", []) or [])
-                        if str(tag).strip()
-                    ],
-                    ensure_ascii=False,
-                ),
-                json.dumps(comments, ensure_ascii=False),
-                len(comments),
+                prepared["partition"],
+                prepared["title"],
+                prepared["description"],
+                prepared["url"],
+                json.dumps(prepared["tags"], ensure_ascii=False),
+                json.dumps(prepared["comments"], ensure_ascii=False),
+                len(prepared["comments"]),
                 now,
             )
-        )
-
-    valid_rows = [row for row in rows if row[0] and row[2] and row[5]]
-    if not valid_rows:
-        return
-
-    conn.executemany(
-        """
-        INSERT INTO scout_raw_videos (
-            bvid,
-            collected_date,
-            partition,
-            title,
-            description,
-            video_url,
-            tags_json,
-            comments_json,
-            comment_count,
-            candidate_status,
-            candidate_extracted_at,
-            miner_status,
-            miner_processed_at,
-            created_at,
-            updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, 'pending', NULL, ?, ?)
-        ON CONFLICT (bvid, collected_date) DO UPDATE
-        SET partition = excluded.partition,
-            title = excluded.title,
-            description = excluded.description,
-            video_url = excluded.video_url,
-            tags_json = excluded.tags_json,
-            comments_json = excluded.comments_json,
-            comment_count = excluded.comment_count,
-            candidate_status = 'pending',
-            candidate_extracted_at = NULL,
-            miner_status = 'pending',
-            miner_processed_at = NULL,
-            updated_at = excluded.updated_at
-        """,
-        [(*row, row[-1]) for row in valid_rows],
     )
 
-    for video in structured_videos:
-        if not video["bvid"] or not video["partition"] or not video["url"]:
+    if not rows:
+        logger.info(
+            "scout raw videos skipped because no valid rows",
+            extra={
+                "event": "scout_raw_videos_no_valid_rows",
+                "target_date": target_date.isoformat(),
+                **stats,
+            },
+        )
+        return stats
+
+    for row, video in zip(rows, structured_videos, strict=False):
+        signature = _build_scout_video_signature(
+            partition=video["partition"],
+            title=video["title"],
+            description=video["description"],
+            video_url=video["url"],
+            tags=video["tags"],
+            comments=video["comments"],
+        )
+        bvid = video["bvid"]
+
+        existing_row = conn.execute(
+            """
+            SELECT
+                partition,
+                title,
+                description,
+                video_url,
+                tags_json,
+                comments_json
+            FROM scout_raw_videos
+            WHERE bvid = ? AND collected_date = ?
+            """,
+            [bvid, target_date],
+        ).fetchone()
+        if existing_row:
+            existing_signature = _build_scout_video_signature(
+                partition=str(existing_row[0] or "").strip(),
+                title=str(existing_row[1] or "").strip(),
+                description=str(existing_row[2] or "").strip(),
+                video_url=str(existing_row[3] or "").strip(),
+                tags=_load_json_text(existing_row[4], default=[]),
+                comments=_load_json_text(existing_row[5], default=[]),
+            )
+            if existing_signature == signature:
+                stats["same_day_unchanged_count"] += 1
+                continue
+
+        if not existing_row and _has_duplicate_scout_snapshot(
+            conn,
+            bvid=bvid,
+            signature=signature,
+            exclude_date=target_date,
+        ):
+            stats["cross_day_duplicate_count"] += 1
             continue
+
+        conn.execute(
+            """
+            INSERT INTO scout_raw_videos (
+                bvid,
+                collected_date,
+                partition,
+                title,
+                description,
+                video_url,
+                tags_json,
+                comments_json,
+                comment_count,
+                candidate_status,
+                candidate_extracted_at,
+                miner_status,
+                miner_processed_at,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, 'pending', NULL, ?, ?)
+            ON CONFLICT (bvid, collected_date) DO UPDATE
+            SET partition = excluded.partition,
+                title = excluded.title,
+                description = excluded.description,
+                video_url = excluded.video_url,
+                tags_json = excluded.tags_json,
+                comments_json = excluded.comments_json,
+                comment_count = excluded.comment_count,
+                candidate_status = 'pending',
+                candidate_extracted_at = NULL,
+                miner_status = 'pending',
+                miner_processed_at = NULL,
+                updated_at = excluded.updated_at
+            """,
+            [*row, row[-1]],
+        )
+        if existing_row:
+            stats["updated_count"] += 1
+        else:
+            stats["inserted_count"] += 1
+        stats["persisted_count"] += 1
         _upsert_scout_raw_comments(
             conn,
             video=video,
             target_date=target_date,
             collected_at=now,
         )
+
+    logger.info(
+        "scout raw videos persisted",
+        extra={
+            "event": "scout_raw_videos_persisted",
+            "target_date": target_date.isoformat(),
+            **stats,
+        },
+    )
+    return stats
+
+
+def _prepare_scout_video_payload(video: dict) -> dict:
+    comments = _normalize_text_items(video.get("comments", []))
+    comment_snapshots = _normalize_comment_snapshots(video.get("comment_snapshots", []))
+    if comment_snapshots:
+        comments = _normalize_text_items(
+            [
+                *comments,
+                *[
+                    str(snapshot.get("message", "")).strip()
+                    for snapshot in comment_snapshots
+                    if str(snapshot.get("message", "")).strip()
+                ],
+            ]
+        )
+    return {
+        "bvid": str(video.get("bvid", "")).strip(),
+        "partition": str(video.get("partition", "")).strip(),
+        "title": str(video.get("title", "")).strip(),
+        "description": str(video.get("description", "")).strip(),
+        "url": str(video.get("url", "")).strip(),
+        "tags": _normalize_text_items(video.get("tags", []) or []),
+        "comments": comments,
+        "comment_snapshots": comment_snapshots,
+    }
+
+
+def _normalize_text_items(values) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for value in values:
+        item = str(value).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    return normalized
+
+
+def _normalize_comment_snapshots(values) -> list[dict]:
+    if not isinstance(values, list):
+        return []
+    seen_keys: set[tuple] = set()
+    normalized: list[dict] = []
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        message = str(value.get("message", "")).strip()
+        rpid = _safe_int(value.get("rpid"))
+        ctime = _safe_int(value.get("ctime"))
+        uname = str(value.get("uname", "")).strip()
+        dedup_key = ("rpid", rpid) if rpid else ("text", message, uname, ctime)
+        if dedup_key in seen_keys:
+            continue
+        seen_keys.add(dedup_key)
+
+        normalized_value = dict(value)
+        normalized_value["message"] = message
+        if rpid is not None:
+            normalized_value["rpid"] = rpid
+        if ctime is not None:
+            normalized_value["ctime"] = ctime
+        pictures = normalized_value.get("pictures", [])
+        if isinstance(pictures, list):
+            picture_seen: set[str] = set()
+            normalized_pictures: list[dict] = []
+            for picture in pictures:
+                if not isinstance(picture, dict):
+                    continue
+                source_url = str(picture.get("img_src", "")).strip()
+                if not source_url or source_url in picture_seen:
+                    continue
+                picture_seen.add(source_url)
+                normalized_pictures.append(picture)
+            normalized_value["pictures"] = normalized_pictures
+        else:
+            normalized_value["pictures"] = []
+        normalized.append(normalized_value)
+    return normalized
+
+
+def _build_scout_video_signature(
+    *,
+    partition: str,
+    title: str,
+    description: str,
+    video_url: str,
+    tags: list,
+    comments: list,
+) -> str:
+    payload = {
+        "partition": partition.strip(),
+        "title": title.strip(),
+        "description": description.strip(),
+        "video_url": video_url.strip(),
+        "tags": sorted(_normalize_text_items(tags)),
+        "comments": sorted(_normalize_text_items(comments)),
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(serialized.encode()).hexdigest()
+
+
+def _has_duplicate_scout_snapshot(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    bvid: str,
+    signature: str,
+    exclude_date: date,
+) -> bool:
+    rows = conn.execute(
+        """
+        SELECT
+            collected_date,
+            partition,
+            title,
+            description,
+            video_url,
+            tags_json,
+            comments_json
+        FROM scout_raw_videos
+        WHERE bvid = ?
+        """,
+        [bvid],
+    ).fetchall()
+    for row in rows:
+        if row[0] == exclude_date:
+            continue
+        existing_signature = _build_scout_video_signature(
+            partition=str(row[1] or "").strip(),
+            title=str(row[2] or "").strip(),
+            description=str(row[3] or "").strip(),
+            video_url=str(row[4] or "").strip(),
+            tags=_load_json_text(row[5], default=[]),
+            comments=_load_json_text(row[6], default=[]),
+        )
+        if existing_signature == signature:
+            return True
+    return False
 
 
 def _upsert_scout_raw_comments(
@@ -1177,6 +1372,114 @@ def get_scout_raw_video(
     snapshot["comments_with_pictures"] = sum(
         1 for item in snapshot["comment_snapshots"] if item["pictures"]
     )
+    return snapshot
+
+
+def update_scout_raw_video_stage(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    bvid: str,
+    collected_date: date,
+    stage: str,
+) -> dict | None:
+    """手动调整 Scout 快照所处阶段，并同步回退/推进关联的 Miner 状态。"""
+    if stage not in {"scouted", "mined", "researched"}:
+        raise ValueError(f"unsupported scout stage: {stage}")
+
+    existing = conn.execute(
+        """
+        SELECT 1
+        FROM scout_raw_videos
+        WHERE bvid = ? AND collected_date = ?
+        """,
+        [bvid, collected_date],
+    ).fetchone()
+    if not existing:
+        return None
+
+    now = datetime.now()
+    affected_insight_count = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM miner_comment_insights
+        WHERE bvid = ? AND collected_date = ?
+        """,
+        [bvid, collected_date],
+    ).fetchone()[0]
+
+    if stage == "scouted":
+        conn.execute(
+            """
+            UPDATE scout_raw_videos
+            SET miner_status = 'pending',
+                miner_processed_at = NULL,
+                candidate_status = 'pending',
+                candidate_extracted_at = NULL,
+                updated_at = ?
+            WHERE bvid = ? AND collected_date = ?
+            """,
+            [now, bvid, collected_date],
+        )
+        conn.execute(
+            """
+            UPDATE miner_comment_insights
+            SET status = 'pending',
+                updated_at = ?
+            WHERE bvid = ? AND collected_date = ?
+            """,
+            [now, bvid, collected_date],
+        )
+    elif stage == "mined":
+        conn.execute(
+            """
+            UPDATE scout_raw_videos
+            SET miner_status = 'processed',
+                miner_processed_at = COALESCE(miner_processed_at, ?),
+                candidate_status = 'pending',
+                candidate_extracted_at = NULL,
+                updated_at = ?
+            WHERE bvid = ? AND collected_date = ?
+            """,
+            [now, now, bvid, collected_date],
+        )
+        conn.execute(
+            """
+            UPDATE miner_comment_insights
+            SET status = 'pending',
+                updated_at = ?
+            WHERE bvid = ? AND collected_date = ?
+            """,
+            [now, bvid, collected_date],
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE scout_raw_videos
+            SET miner_status = 'processed',
+                miner_processed_at = COALESCE(miner_processed_at, ?),
+                candidate_status = 'processed',
+                candidate_extracted_at = COALESCE(candidate_extracted_at, ?),
+                updated_at = ?
+            WHERE bvid = ? AND collected_date = ?
+            """,
+            [now, now, now, bvid, collected_date],
+        )
+        conn.execute(
+            """
+            UPDATE miner_comment_insights
+            SET status = 'processed',
+                updated_at = ?
+            WHERE bvid = ? AND collected_date = ?
+            """,
+            [now, bvid, collected_date],
+        )
+
+    snapshot = get_scout_raw_video(conn, bvid=bvid, collected_date=collected_date)
+    if not snapshot:
+        return None
+
+    snapshot["requested_stage"] = stage
+    snapshot["affected_insight_count"] = affected_insight_count
     return snapshot
 
 

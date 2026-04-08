@@ -4,11 +4,14 @@ LLM 梗识别模块：直接从高赞评论中提取梗候选短语。
 
 from __future__ import annotations
 
-import json
-
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from meme_detector.llm_factory import build_async_openai_client, resolve_llm_config
+from meme_detector.llm_factory import (
+    build_async_openai_client,
+    load_json_response,
+    request_json_chat_completion,
+    resolve_llm_config,
+)
 from meme_detector.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -52,17 +55,15 @@ async def _extract_memes_from_batch(comments: list[str]) -> list[dict]:
     comment_text = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(comments))
     user_msg = f"以下是来自B站的高赞评论，请识别其中正在传播的梗：\n\n{comment_text}"
 
-    resp = await client.chat.completions.create(
-        model=llm_config.model,
+    raw = await request_json_chat_completion(
+        client=client,
+        model_name=llm_config.model,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
         ],
-        response_format={"type": "json_object"},
     )
-
-    raw = resp.choices[0].message.content or "{}"
-    data = json.loads(raw)
+    data = load_json_response(raw)
     return data.get("memes", [])
 
 

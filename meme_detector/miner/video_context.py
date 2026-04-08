@@ -16,6 +16,9 @@ from meme_detector.archivist.duckdb_store import (
     upsert_video_context_cache,
 )
 from meme_detector.config import settings
+from meme_detector.logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 def _build_credential() -> Credential | None:
@@ -38,6 +41,14 @@ async def get_bilibili_video_context(bvid: str) -> dict:
     cached = get_video_context_cache(conn, normalized_bvid)
     conn.close()
     if cached:
+        logger.info(
+            "video context cache hit",
+            extra={
+                "event": "video_context_cache_hit",
+                "bvid": normalized_bvid,
+                "status": cached.get("status", ""),
+            },
+        )
         return _public_video_context(cached, source="cache")
 
     video_url = f"https://www.bilibili.com/video/{normalized_bvid}"
@@ -45,6 +56,15 @@ async def get_bilibili_video_context(bvid: str) -> dict:
     title = str(info.get("title", ""))
     duration_seconds = _extract_duration_seconds(info)
     description_text = str(info.get("desc", ""))[:1200]
+    logger.info(
+        "video context info loaded",
+        extra={
+            "event": "video_context_info_loaded",
+            "bvid": normalized_bvid,
+            "title": title,
+            "duration_seconds": duration_seconds,
+        },
+    )
 
     if duration_seconds and duration_seconds > settings.bibigpt_max_duration_seconds:
         payload = {
@@ -63,9 +83,24 @@ async def get_bilibili_video_context(bvid: str) -> dict:
             "source": "local",
         }
         _save_cache(payload)
+        logger.info(
+            "video context skipped because duration exceeded",
+            extra={
+                "event": "video_context_duration_skipped",
+                "bvid": normalized_bvid,
+                "duration_seconds": duration_seconds,
+            },
+        )
         return _public_video_context(payload, source="cache")
 
     if not settings.bibigpt_api_token:
+        logger.warning(
+            "video context unavailable because BibiGPT token is missing",
+            extra={
+                "event": "video_context_missing_api_token",
+                "bvid": normalized_bvid,
+            },
+        )
         return _public_video_context(
             {
             "bvid": normalized_bvid,
@@ -86,8 +121,23 @@ async def get_bilibili_video_context(bvid: str) -> dict:
         )
 
     try:
+        logger.info(
+            "video context requesting BibiGPT summary",
+            extra={
+                "event": "video_context_bibigpt_requested",
+                "bvid": normalized_bvid,
+                "video_url": video_url,
+            },
+        )
         api_result = await _fetch_bibigpt_summary(video_url)
     except httpx.TimeoutException as exc:
+        logger.warning(
+            "video context BibiGPT timeout",
+            extra={
+                "event": "video_context_bibigpt_timeout",
+                "bvid": normalized_bvid,
+            },
+        )
         return _public_video_context(
             _build_bibigpt_error_context(
                 bvid=normalized_bvid,
@@ -101,6 +151,13 @@ async def get_bilibili_video_context(bvid: str) -> dict:
             source="local",
         )
     except httpx.HTTPError as exc:
+        logger.warning(
+            "video context BibiGPT request failed",
+            extra={
+                "event": "video_context_bibigpt_request_failed",
+                "bvid": normalized_bvid,
+            },
+        )
         return _public_video_context(
             _build_bibigpt_error_context(
                 bvid=normalized_bvid,
@@ -122,6 +179,15 @@ async def get_bilibili_video_context(bvid: str) -> dict:
         payload=api_result,
     )
     _save_cache(normalized)
+    logger.info(
+        "video context BibiGPT summary ready",
+        extra={
+            "event": "video_context_bibigpt_ready",
+            "bvid": normalized_bvid,
+            "status": normalized.get("status", ""),
+            "chapter_count": len(normalized.get("chapters", [])),
+        },
+    )
     return _public_video_context(normalized, source="bibigpt")
 
 

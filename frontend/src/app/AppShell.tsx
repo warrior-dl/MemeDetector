@@ -2,6 +2,7 @@ import {
   ApartmentOutlined,
   DatabaseOutlined,
   DotChartOutlined,
+  MessageOutlined,
   RadarChartOutlined,
   VideoCameraOutlined,
 } from "@ant-design/icons";
@@ -14,6 +15,7 @@ const { Header, Sider, Content } = Layout;
 const navigationItems = [
   { key: "/dashboard", icon: <RadarChartOutlined />, label: "Dashboard" },
   { key: "/scout", icon: <VideoCameraOutlined />, label: "Scout 采集" },
+  { key: "/miner", icon: <MessageOutlined />, label: "Miner 结果" },
   { key: "/candidates", icon: <DotChartOutlined />, label: "候选工作台" },
   { key: "/library", icon: <DatabaseOutlined />, label: "梗库" },
   { key: "/pipeline", icon: <ApartmentOutlined />, label: "Pipeline" },
@@ -126,6 +128,9 @@ function resolvePageTitle(pathname: string) {
   }
   if (pathname.startsWith("/scout")) {
     return "Scout 采集";
+  }
+  if (pathname.startsWith("/miner")) {
+    return "Miner 结果";
   }
   if (pathname.startsWith("/library")) {
     return "梗库";

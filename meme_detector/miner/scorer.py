@@ -38,6 +38,14 @@ async def run_miner(target_date: date | None = None) -> MinerRunResult:
     if not pending_videos:
         logger.info("no pending scout videos for miner", extra={"event": "miner_no_pending_videos"})
         return MinerRunResult(target_date=today.isoformat())
+    logger.info(
+        "miner pending videos loaded",
+        extra={
+            "event": "miner_pending_videos_loaded",
+            "target_date": today.isoformat(),
+            "video_count": len(pending_videos),
+        },
+    )
 
     insight_count = 0
     high_value_count = 0
@@ -71,12 +79,24 @@ async def run_miner(target_date: date | None = None) -> MinerRunResult:
         )
         insights = await _score_video_comments(video, comments)
         _persist_video_insights(video, insights)
-        insight_count += len(insights)
-        high_value_count += sum(
+        current_high_value_count = sum(
             1
             for item in insights
             if item.get("confidence", 0.0) >= settings.miner_comment_confidence_threshold
             and (item.get("is_meme_candidate") or item.get("is_insider_knowledge"))
+        )
+        insight_count += len(insights)
+        high_value_count += current_high_value_count
+        logger.info(
+            "miner video persisted",
+            extra={
+                "event": "miner_video_persisted",
+                "bvid": str(video.get("bvid", "")).strip() or "UNKNOWN",
+                "result_count": len(insights),
+                "high_value_count": current_high_value_count,
+                "video_index": video_index,
+                "video_total": len(pending_videos),
+            },
         )
 
     logger.info(

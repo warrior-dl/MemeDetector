@@ -76,6 +76,14 @@ async def run_research() -> ResearchRunResult:
         pending_count=len(candidates),
         bootstrapped_count=len(bootstrapped_candidates),
     )
+    logger.info(
+        "research bootstrap summary",
+        extra={
+            "event": "research_bootstrap_summary",
+            "result_count": len(bootstrapped_candidates),
+            "pending_count": len(candidates),
+        },
+    )
 
     if not candidates:
         logger.info("no pending candidates for research", extra={"event": "research_no_pending_candidates"})
@@ -121,6 +129,15 @@ async def run_research() -> ResearchRunResult:
     )
 
     if not to_deep:
+        logger.info(
+            "research no candidates passed screening",
+            extra={
+                "event": "research_no_candidates_passed_screening",
+                "candidate_count": len(candidates),
+                "rejected_count": len(rejected),
+                "failed_count": len(pending_retry),
+            },
+        )
         return result
 
     # ── Step 2 & 3: 深度分析 + URL 验证 ──────────────────────
@@ -135,6 +152,8 @@ async def run_research() -> ResearchRunResult:
             extra={
                 "event": "research_candidate_started",
                 "word": word,
+                "score": c["score"],
+                "video_count": len(c.get("video_refs", [])),
             },
         )
 
@@ -170,12 +189,26 @@ async def run_research() -> ResearchRunResult:
             # 有效来源少于预期时，适当降低置信度
             if original_source_count > 0 and len(valid_urls) < original_source_count / 2:
                 record.confidence_score *= 0.8
+                logger.info(
+                    "research confidence lowered after source verification",
+                    extra={
+                        "event": "research_confidence_lowered_after_source_verification",
+                        "word": word,
+                        "source_count": original_source_count,
+                        "valid_source_count": len(valid_urls),
+                    },
+                )
 
         await _accept_candidate(word, record)
         result.add_accepted_record(record)
         logger.info(
             "research candidate accepted",
-            extra={"event": "research_candidate_accepted", "word": word},
+            extra={
+                "event": "research_candidate_accepted",
+                "word": word,
+                "source_count": len(record.source_urls),
+                "confidence_score": record.confidence_score,
+            },
         )
 
     logger.info(

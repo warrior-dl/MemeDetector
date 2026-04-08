@@ -167,6 +167,45 @@ export interface CandidateVerifyResponse {
   status: string;
 }
 
+export interface MinerCommentInsightItem {
+  insight_id: string;
+  bvid: string;
+  collected_date?: string;
+  partition?: string;
+  title?: string;
+  description?: string;
+  video_url?: string;
+  url?: string;
+  tags?: string[];
+  comment_text?: string;
+  confidence?: number;
+  is_meme_candidate?: boolean;
+  is_insider_knowledge?: boolean;
+  reason?: string;
+  video_context?: Record<string, unknown>;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MinerCommentInsightsPageParams {
+  status?: string;
+  keyword?: string;
+  bvid?: string;
+  onlyMemeCandidates?: boolean;
+  onlyInsiderKnowledge?: boolean;
+  limit?: number;
+  offset?: number;
+  enabled?: boolean;
+}
+
+export interface MinerCommentInsightsPageResponse {
+  items: MinerCommentInsightItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface ScoutRawVideoSummary {
   bvid: string;
   collected_date: string;
@@ -238,6 +277,11 @@ export interface ScoutRawVideoDetail extends ScoutRawVideoSummary {
   comments?: string[];
   comment_snapshots?: ScoutCommentSnapshot[];
   comments_with_pictures?: number;
+}
+
+export interface ScoutRawVideoStageUpdateResponse extends ScoutRawVideoDetail {
+  requested_stage: string;
+  affected_insight_count: number;
 }
 
 export interface TriggerJobResponse {

@@ -12,6 +12,9 @@ const ScoutPage = lazy(() =>
 const CandidatesPage = lazy(() =>
   import("../pages/CandidatesPage").then((module) => ({ default: module.CandidatesPage })),
 );
+const MinerPage = lazy(() =>
+  import("../pages/MinerPage").then((module) => ({ default: module.MinerPage })),
+);
 const LibraryPage = lazy(() =>
   import("../pages/LibraryPage").then((module) => ({ default: module.LibraryPage })),
 );
@@ -26,6 +29,7 @@ export default function App() {
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<PageLoader><DashboardPage /></PageLoader>} />
         <Route path="/scout" element={<PageLoader><ScoutPage /></PageLoader>} />
+        <Route path="/miner" element={<PageLoader><MinerPage /></PageLoader>} />
         <Route path="/candidates" element={<PageLoader><CandidatesPage /></PageLoader>} />
         <Route path="/library" element={<PageLoader><LibraryPage /></PageLoader>} />
         <Route path="/pipeline" element={<PageLoader><PipelinePage /></PageLoader>} />

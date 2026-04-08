@@ -10,6 +10,6 @@ from datetime import date
 from meme_detector.archivist.duckdb_store import get_conn, upsert_scout_raw_videos
 
 
-def persist_raw_videos(videos: list[dict], collected_date: date) -> None:
+def persist_raw_videos(videos: list[dict], collected_date: date) -> dict:
     with closing(get_conn()) as conn:
-        upsert_scout_raw_videos(conn, videos, collected_date)
+        return upsert_scout_raw_videos(conn, videos, collected_date)

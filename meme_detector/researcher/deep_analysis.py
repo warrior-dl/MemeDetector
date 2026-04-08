@@ -110,8 +110,29 @@ async def deep_analyze(
         )
         conn.close()
 
+    logger.info(
+        "research deep analysis context preparation started",
+        extra={
+            "event": "research_deep_analysis_context_preparation_started",
+            "word": word,
+            "conversation_id": conversation_id,
+            "score": score,
+            "video_count": len(video_refs),
+        },
+    )
     video_contexts = await prepare_linked_video_contexts(video_refs)
     external_search_context = await prepare_external_search_context(word)
+    logger.info(
+        "research deep analysis context prepared",
+        extra={
+            "event": "research_deep_analysis_context_prepared",
+            "word": word,
+            "conversation_id": conversation_id,
+            "video_count": len(video_contexts),
+            "summary_sufficient": external_search_context.get("summary_sufficient", False),
+            "result_count": len(external_search_context.get("web_results", [])),
+        },
+    )
     prompt = (
         f'请为网络梗词汇「{word}」撰写完整词条。\n\n'
         f'检测信息：\n'
@@ -137,6 +158,8 @@ async def deep_analyze(
                 "event": "research_deep_analysis_succeeded",
                 "word": word,
                 "conversation_id": conversation_id,
+                "source_count": len(record.source_urls),
+                "result_count": len(record.category),
             },
         )
         if conversation_id:
@@ -210,6 +233,14 @@ async def prepare_linked_video_contexts(
         bvid = str(video_ref.get("bvid", "")).strip()
         if not bvid:
             continue
+        logger.info(
+            "research linked video context started",
+            extra={
+                "event": "research_linked_video_context_started",
+                "bvid": bvid,
+                "word": str(video_ref.get("word", "")).strip(),
+            },
+        )
         try:
             context = await get_bilibili_video_context(bvid)
         except Exception as exc:
@@ -224,11 +255,26 @@ async def prepare_linked_video_contexts(
                 "context": context,
             }
         )
+        logger.info(
+            "research linked video context completed",
+            extra={
+                "event": "research_linked_video_context_completed",
+                "bvid": bvid,
+                "status": context.get("status", ""),
+            },
+        )
     return prepared
 
 
 async def prepare_external_search_context(word: str) -> dict:
     query = f"{word} 梗 来源"
+    logger.info(
+        "research external search started",
+        extra={
+            "event": "research_external_search_started",
+            "word": word,
+        },
+    )
     summary_result = await volcengine_web_search_summary(query, num_results=5)
     summary_ok = isinstance(summary_result, dict) and "error" not in summary_result
     summary_sufficient = summary_ok and is_summary_search_sufficient(summary_result)
@@ -236,6 +282,15 @@ async def prepare_external_search_context(word: str) -> dict:
     web_results: list[dict] = []
     if not summary_sufficient:
         web_results = await volcengine_web_search(query, num_results=5)
+    logger.info(
+        "research external search completed",
+        extra={
+            "event": "research_external_search_completed",
+            "word": word,
+            "summary_sufficient": summary_sufficient,
+            "result_count": len(web_results),
+        },
+    )
 
     return {
         "query": query,

@@ -1,5 +1,6 @@
 import {
   Alert,
+  App,
   Button,
   Descriptions,
   Drawer,
@@ -8,6 +9,7 @@ import {
   Input,
   List,
   Pagination,
+  Popconfirm,
   Select,
   Space,
   Table,
@@ -21,11 +23,16 @@ import type {
   ScoutMediaAsset,
   ScoutRawVideoSummary,
 } from "../data/types";
-import { useScoutRawVideoDetail, useScoutRawVideosPage } from "../features/scout/hooks";
+import {
+  useScoutRawVideoDetail,
+  useScoutRawVideosPage,
+  useUpdateScoutRawVideoStage,
+} from "../features/scout/hooks";
 import { PageSection } from "../ui/PageSection";
 import { formatOptionalDateTime } from "../utils/format";
 
 export function ScoutPage() {
+  const { message } = App.useApp();
   const [candidateStatus, setCandidateStatus] = useState<string>();
   const [partition, setPartition] = useState("");
   const [keywordInput, setKeywordInput] = useState("");
@@ -33,6 +40,7 @@ export function ScoutPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [selectedVideo, setSelectedVideo] = useState<ScoutRawVideoSummary>();
+  const [stageDraft, setStageDraft] = useState<string>();
 
   const videosQuery = useScoutRawVideosPage({
     candidateStatus,
@@ -42,6 +50,8 @@ export function ScoutPage() {
     offset: (page - 1) * pageSize,
   });
   const detailQuery = useScoutRawVideoDetail(selectedVideo?.bvid, selectedVideo?.collected_date);
+  const updateStageMutation = useUpdateScoutRawVideoStage();
+  const detail = detailQuery.data;
 
   useEffect(() => {
     const items = videosQuery.data?.items ?? [];
@@ -58,6 +68,14 @@ export function ScoutPage() {
       setSelectedVideo(undefined);
     }
   }, [selectedVideo, videosQuery.data]);
+
+  useEffect(() => {
+    if (!detail) {
+      setStageDraft(undefined);
+      return;
+    }
+    setStageDraft(detail.pipeline_stage);
+  }, [detail]);
 
   const columns = useMemo<ColumnsType<ScoutRawVideoSummary>>(
     () => [
@@ -101,7 +119,10 @@ export function ScoutPage() {
     [],
   );
 
-  const detail = detailQuery.data;
+  const canSubmitStageChange =
+    Boolean(detail?.bvid && detail?.collected_date && stageDraft) &&
+    stageDraft !== detail?.pipeline_stage &&
+    !updateStageMutation.isPending;
 
   return (
     <PageSection
@@ -257,6 +278,83 @@ export function ScoutPage() {
                             },
                           ]}
                         />
+                        <div
+                          style={{
+                            padding: 16,
+                            borderRadius: 12,
+                            background: "#f7faf9",
+                            border: "1px solid #d7ebe7",
+                          }}
+                        >
+                          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                            <Typography.Text strong>手动调整阶段</Typography.Text>
+                            <Typography.Text type="secondary">
+                              改到“仅 Scout”会重置该视频当天的 Miner 与候选提取状态。
+                              改到“已 Miner”会保留 Miner 完成态，但把对应评论线索重新放回待提取。
+                            </Typography.Text>
+                            <Space wrap>
+                              <Select
+                                value={stageDraft}
+                                style={{ width: 180 }}
+                                options={[
+                                  { label: "仅 Scout", value: "scouted" },
+                                  { label: "已 Miner", value: "mined" },
+                                  { label: "已进入 Research", value: "researched" },
+                                ]}
+                                onChange={setStageDraft}
+                              />
+                              <Popconfirm
+                                title="确认更新阶段"
+                                description={`将 ${detail.pipeline_stage || "--"} 改为 ${stageDraft || "--"}，并同步更新该视频当天的下游状态。`}
+                                okText="确认"
+                                cancelText="取消"
+                                disabled={!canSubmitStageChange}
+                                onConfirm={async () => {
+                                  if (!detail?.bvid || !detail?.collected_date || !stageDraft) {
+                                    return;
+                                  }
+                                  try {
+                                    const updated = await updateStageMutation.mutateAsync({
+                                      bvid: detail.bvid,
+                                      collectedDate: detail.collected_date,
+                                      stage: stageDraft as "scouted" | "mined" | "researched",
+                                    });
+                                    setSelectedVideo((current) =>
+                                      current &&
+                                      current.bvid === updated.bvid &&
+                                      current.collected_date === updated.collected_date
+                                        ? {
+                                            ...current,
+                                            pipeline_stage: updated.pipeline_stage,
+                                            miner_status: updated.miner_status,
+                                            miner_processed_at: updated.miner_processed_at,
+                                            candidate_status: updated.candidate_status,
+                                            candidate_extracted_at: updated.candidate_extracted_at,
+                                            updated_at: updated.updated_at,
+                                          }
+                                        : current,
+                                    );
+                                    message.success(
+                                      `阶段已更新，关联评论线索 ${updated.affected_insight_count} 条已同步处理。`,
+                                    );
+                                  } catch (error) {
+                                    message.error(
+                                      error instanceof Error ? error.message : "阶段更新失败",
+                                    );
+                                  }
+                                }}
+                              >
+                                <Button
+                                  type="primary"
+                                  loading={updateStageMutation.isPending}
+                                  disabled={!canSubmitStageChange}
+                                >
+                                  更新阶段
+                                </Button>
+                              </Popconfirm>
+                            </Space>
+                          </Space>
+                        </div>
                         <div>
                           <Typography.Text strong>视频链接</Typography.Text>
                           <div style={{ marginTop: 8 }}>

@@ -1,9 +1,16 @@
+import json
+from json import JSONDecodeError
+
 import pytest
 
 from meme_detector.researcher import tools
 
 
 class _FakeResponse:
+    status_code = 200
+    headers = {"content-type": "application/json; charset=utf-8"}
+    text = ""
+
     def __init__(self, payload: dict):
         self._payload = payload
 
@@ -12,6 +19,83 @@ class _FakeResponse:
 
     def json(self) -> dict:
         return self._payload
+
+
+class _FakeNonJsonResponse:
+    status_code = 200
+    headers = {"content-type": "text/html; charset=utf-8"}
+    text = "<html>gateway error</html>"
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        raise JSONDecodeError("Expecting value", "", 0)
+
+
+class _FakeSseResponse:
+    status_code = 200
+    headers = {"content-type": "text/event-stream"}
+
+    def __init__(self):
+        first_event = {
+            "ResponseMetadata": {"RequestId": "req-1"},
+            "Result": {
+                "ResultCount": 1,
+                "WebResults": [
+                    {
+                        "Title": "鲸宝放心飞",
+                        "Url": "https://example.com/jingbao",
+                        "Summary": "网页摘要",
+                        "Content": "网页正文",
+                        "SiteName": "测试站点",
+                    }
+                ],
+                "Choices": None,
+            },
+        }
+        chunk_a = {
+            "ResponseMetadata": {"RequestId": "req-1"},
+            "Result": {
+                "ResultCount": 0,
+                "WebResults": None,
+                "Choices": [
+                    {
+                        "Delta": {"Role": "assistant", "Content": "鲸宝"},
+                        "FinishReason": "",
+                        "Index": 0,
+                    }
+                ],
+            },
+        }
+        chunk_b = {
+            "ResponseMetadata": {"RequestId": "req-1"},
+            "Result": {
+                "ResultCount": 0,
+                "WebResults": None,
+                "Choices": [
+                    {
+                        "Delta": {"Role": "assistant", "Content": "放心飞"},
+                        "FinishReason": "stop",
+                        "Index": 0,
+                    }
+                ],
+            },
+        }
+        self.text = "\n\n".join(
+            [
+                f"data:{json.dumps(first_event, ensure_ascii=False)}",
+                f"data:{json.dumps(chunk_a, ensure_ascii=False)}",
+                f"data:{json.dumps(chunk_b, ensure_ascii=False)}",
+                "data:[DONE]",
+            ]
+        )
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        raise JSONDecodeError("Expecting value", "", 0)
 
 
 class _FakeAsyncClient:
@@ -36,6 +120,41 @@ class _FakeAsyncClient:
             }
         )
         return _FakeResponse(self._payload)
+
+
+class _FakeNonJsonAsyncClient:
+    def __init__(self, recorder: list[dict], **kwargs):
+        self._recorder = recorder
+        self._kwargs = kwargs
+
+    async def __aenter__(self):
+        self._recorder.append({"client_kwargs": self._kwargs})
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def post(self, url: str, *, headers: dict, content: bytes):
+        self._recorder.append(
+            {
+                "url": url,
+                "headers": headers,
+                "content": content.decode("utf-8"),
+            }
+        )
+        return _FakeNonJsonResponse()
+
+
+class _FakeSseAsyncClient(_FakeNonJsonAsyncClient):
+    async def post(self, url: str, *, headers: dict, content: bytes):
+        self._recorder.append(
+            {
+                "url": url,
+                "headers": headers,
+                "content": content.decode("utf-8"),
+            }
+        )
+        return _FakeSseResponse()
 
 
 @pytest.mark.asyncio
@@ -167,6 +286,59 @@ async def test_volcengine_web_search_summary_supports_flat_result_payload(monkey
                 "auth_info": "",
                 "publish_time": "2025-06-19T15:10:00+08:00",
                 "rank_score": 0.88,
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_volcengine_web_search_summary_reports_non_json_response(monkeypatch):
+    recorder: list[dict] = []
+    monkeypatch.setattr(
+        "meme_detector.researcher.tools.settings.web_search_api_key",
+        "test-key",
+    )
+    monkeypatch.setattr(
+        "meme_detector.researcher.tools.httpx.AsyncClient",
+        lambda **kwargs: _FakeNonJsonAsyncClient(recorder, **kwargs),
+    )
+
+    result = await tools.volcengine_web_search_summary("鲸宝放心飞 梗 来源", num_results=3)
+
+    assert result == {
+        "error": (
+            "Volcengine WebSearch web_summary 返回了非 JSON 响应："
+            "status=200, content-type=text/html; charset=utf-8, body=<html>gateway error</html>"
+        )
+    }
+
+
+@pytest.mark.asyncio
+async def test_volcengine_web_search_summary_parses_sse_response(monkeypatch):
+    recorder: list[dict] = []
+    monkeypatch.setattr(
+        "meme_detector.researcher.tools.settings.web_search_api_key",
+        "test-key",
+    )
+    monkeypatch.setattr(
+        "meme_detector.researcher.tools.httpx.AsyncClient",
+        lambda **kwargs: _FakeSseAsyncClient(recorder, **kwargs),
+    )
+
+    result = await tools.volcengine_web_search_summary("鲸宝放心飞 梗 来源", num_results=3)
+
+    assert result == {
+        "summary": "鲸宝放心飞",
+        "results": [
+            {
+                "title": "鲸宝放心飞",
+                "link": "https://example.com/jingbao",
+                "snippet": "网页摘要",
+                "content": "网页正文",
+                "site_name": "测试站点",
+                "auth_info": "",
+                "publish_time": "",
+                "rank_score": None,
             }
         ],
     }

@@ -10,7 +10,12 @@ from typing import Any
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from meme_detector.config import settings
-from meme_detector.llm_factory import build_async_openai_client, resolve_llm_config
+from meme_detector.llm_factory import (
+    build_async_openai_client,
+    load_json_response,
+    request_json_chat_completion,
+    resolve_llm_config,
+)
 from meme_detector.logging_utils import get_logger
 from meme_detector.researcher.models import QuickScreenResult
 
@@ -64,18 +69,33 @@ async def batch_screen(
         "每项格式：{word, is_meme, confidence, candidate_category, reason}\n\n"
         + "\n".join(word_list)
     )
+    logger.info(
+        "research screening request started",
+        extra={
+            "event": "research_screen_request_started",
+            "candidate_count": len(candidates),
+            "model_name": llm_config.model,
+            "provider": llm_config.provider,
+        },
+    )
 
-    resp = await client.chat.completions.create(
-        model=llm_config.model,
+    raw = await request_json_chat_completion(
+        client=client,
+        model_name=llm_config.model,
         messages=[
             {"role": "system", "content": _SCREEN_SYSTEM},
             {"role": "user", "content": user_msg},
         ],
-        response_format={"type": "json_object"},
     )
-
-    raw = resp.choices[0].message.content or "{}"
     results = extract_screen_results(raw, candidates)
+    logger.info(
+        "research screening request completed",
+        extra={
+            "event": "research_screen_request_completed",
+            "candidate_count": len(candidates),
+            "result_count": len(results),
+        },
+    )
     if len(results) < len(candidates):
         logger.warning(
             "research screening partially parsed",
@@ -116,7 +136,7 @@ def partition_screen_results(
 
 def extract_screen_results(raw: str, candidates: list[dict]) -> list[QuickScreenResult]:
     try:
-        data = json.loads(raw)
+        data = load_json_response(raw)
     except Exception as exc:
         logger.error(
             "research screening returned invalid json",

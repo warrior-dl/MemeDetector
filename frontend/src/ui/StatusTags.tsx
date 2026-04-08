@@ -44,3 +44,16 @@ export function RunStatusTag({ status }: { status?: string }) {
   };
   return <Tag color={colorMap[normalized]}>{labelMap[normalized] || normalized}</Tag>;
 }
+
+export function MinerInsightStatusTag({ status }: { status?: string }) {
+  const normalized = String(status || "pending").toLowerCase();
+  const colorMap: Record<string, string> = {
+    pending: "processing",
+    processed: "success",
+  };
+  const labelMap: Record<string, string> = {
+    pending: "待提取候选",
+    processed: "已提取候选",
+  };
+  return <Tag color={colorMap[normalized]}>{labelMap[normalized] || normalized}</Tag>;
+}

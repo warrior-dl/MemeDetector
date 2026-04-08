@@ -325,6 +325,36 @@ def test_admin_page_and_runs_api(client):
     assert scout_raw_detail["comments_with_pictures"] == 1
     assert scout_raw_detail["comment_snapshots"][0]["pictures"][0]["asset_id"] == "test-asset"
 
+    stage_promote_resp = client.post(
+        "/api/v1/scout/raw-videos/BV1raw111/stage",
+        json={"collected_date": "2026-03-28", "stage": "researched"},
+    )
+    assert stage_promote_resp.status_code == 200
+    stage_promote_payload = stage_promote_resp.json()
+    assert stage_promote_payload["pipeline_stage"] == "researched"
+    assert stage_promote_payload["miner_status"] == "processed"
+    assert stage_promote_payload["candidate_status"] == "processed"
+    assert stage_promote_payload["affected_insight_count"] == 1
+
+    promoted_miner_detail = client.get("/api/v1/miner/comment-insights/miner-insight-1")
+    assert promoted_miner_detail.status_code == 200
+    assert promoted_miner_detail.json()["status"] == "processed"
+
+    stage_reset_resp = client.post(
+        "/api/v1/scout/raw-videos/BV1raw111/stage",
+        json={"collected_date": "2026-03-28", "stage": "scouted"},
+    )
+    assert stage_reset_resp.status_code == 200
+    stage_reset_payload = stage_reset_resp.json()
+    assert stage_reset_payload["pipeline_stage"] == "scouted"
+    assert stage_reset_payload["miner_status"] == "pending"
+    assert stage_reset_payload["candidate_status"] == "pending"
+    assert stage_reset_payload["affected_insight_count"] == 1
+
+    reset_miner_detail = client.get("/api/v1/miner/comment-insights/miner-insight-1")
+    assert reset_miner_detail.status_code == 200
+    assert reset_miner_detail.json()["status"] == "pending"
+
     media_asset_resp = client.get("/api/v1/media-assets/test-asset")
     assert media_asset_resp.status_code == 200
     assert media_asset_resp.json()["mime_type"] == "image/png"

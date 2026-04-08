@@ -12,6 +12,7 @@
 - 新的管理界面入口为 `http://localhost:8000/`
 - 旧的 `/admin` 静态页已移除
 - 运行日志默认写入 `logs/app.jsonl`，便于按 `run_id`、候选词、异常类型排查
+- `Scout` 现在会跳过重复视频快照；相同内容不会重新触发 `Miner/Researcher`
 
 ## 快速开始
 

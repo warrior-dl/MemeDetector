@@ -157,6 +157,15 @@ async def _fetch_video_comments(
     v = video.Video(bvid=bvid, credential=credential)
     snapshots: list[dict] = []
     page = 1
+    pages_fetched = 0
+    logger.info(
+        "scout comment fetch started",
+        extra={
+            "event": "scout_comment_fetch_started",
+            "bvid": bvid,
+            "comment_limit": max_count,
+        },
+    )
     try:
         aid = v.get_aid()
         while len(snapshots) < max_count:
@@ -211,6 +220,7 @@ async def _fetch_video_comments(
             replies = (result or {}).get("replies") or []
             if not replies:
                 break
+            pages_fetched += 1
             for reply in replies:
                 content = reply.get("content", {}).get("message", "")
                 if not content:
@@ -247,6 +257,15 @@ async def _fetch_video_comments(
             extra={"event": "scout_comment_fetch_failed", "bvid": bvid},
             exc_info=e,
         )
+    logger.info(
+        "scout comment fetch completed",
+        extra={
+            "event": "scout_comment_fetch_completed",
+            "bvid": bvid,
+            "page": pages_fetched,
+            "comment_count": len(snapshots[:max_count]),
+        },
+    )
     return snapshots[:max_count]
 
 
@@ -259,6 +278,14 @@ async def _fetch_partition_top_videos(
     """获取指定分区 Top N 视频的热门评论。"""
     results: list[VideoTexts] = []
     risk_state = CommentRiskState()
+    logger.info(
+        "scout partition fetch started",
+        extra={
+            "event": "scout_partition_fetch_started",
+            "partition_name": partition_name,
+            "video_count": top_n,
+        },
+    )
 
     try:
         # 获取分区排行榜
@@ -361,6 +388,15 @@ async def _fetch_partition_top_videos(
             )
         await _random_delay()
 
+    logger.info(
+        "scout partition fetch completed",
+        extra={
+            "event": "scout_partition_fetch_completed",
+            "partition_name": partition_name,
+            "video_count": len(results),
+            "comment_count": sum(len(item.comments) for item in results),
+        },
+    )
     return results
 
 
@@ -374,6 +410,13 @@ async def collect_all_partitions(
     """
     if partitions is None:
         partitions = TARGET_PARTITIONS
+    logger.info(
+        "scout collect all partitions started",
+        extra={
+            "event": "scout_collect_all_partitions_started",
+            "partition_count": len(partitions),
+        },
+    )
 
     credential = _build_credential()
     request_settings.set_timeout(settings.scout_request_timeout)
@@ -408,4 +451,13 @@ async def collect_all_partitions(
         )
         result[partition_name] = videos
 
+    logger.info(
+        "scout collect all partitions completed",
+        extra={
+            "event": "scout_collect_all_partitions_completed",
+            "partition_count": len(result),
+            "video_count": sum(len(items) for items in result.values()),
+            "comment_count": sum(len(video.comments) for items in result.values() for video in items),
+        },
+    )
     return result

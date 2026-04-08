@@ -15,7 +15,12 @@ from meme_detector.archivist.duckdb_store import (
     get_conn,
 )
 from meme_detector.config import settings
-from meme_detector.llm_factory import build_async_openai_client, resolve_llm_config
+from meme_detector.llm_factory import (
+    build_async_openai_client,
+    load_json_response,
+    request_json_chat_completion,
+    resolve_llm_config,
+)
 from meme_detector.logging_utils import get_logger
 from meme_detector.miner.models import CommentInsightResult
 from meme_detector.miner.video_context import get_bilibili_video_context
@@ -68,12 +73,34 @@ async def score_video_comments(video: dict, comments: list[str]) -> list[dict]:
         comments[i : i + settings.miner_comments_batch_size]
         for i in range(0, len(comments), settings.miner_comments_batch_size)
     ]
+    logger.info(
+        "miner video analysis prepared",
+        extra={
+            "event": "miner_video_analysis_prepared",
+            "bvid": str(video.get("bvid", "")).strip(),
+            "comment_count": len(comments),
+            "chunk_count": len(chunks),
+            "model_name": llm_config.model,
+            "provider": llm_config.provider,
+            "status": context.get("status", ""),
+            "conversation_id": conversation_id,
+        },
+    )
     all_results: list[dict] = []
     try:
         for chunk_index, chunk in enumerate(chunks):
             offset = chunk_index * settings.miner_comments_batch_size
             fallback_reason = "模型未返回有效结果"
             user_msg = build_miner_prompt(video, context, chunk)
+            logger.info(
+                "miner comment chunk started",
+                extra={
+                    "event": "miner_chunk_started",
+                    "bvid": str(video.get("bvid", "")).strip(),
+                    "chunk_index": chunk_index,
+                    "comment_count": len(chunk),
+                },
+            )
             conversation_messages.extend(
                 [
                     {
@@ -102,6 +129,15 @@ async def score_video_comments(video: dict, comments: list[str]) -> list[dict]:
                     }
                 )
                 items = extract_chunk_items(raw)
+                logger.info(
+                    "miner comment chunk response received",
+                    extra={
+                        "event": "miner_chunk_response_received",
+                        "bvid": str(video.get("bvid", "")).strip(),
+                        "chunk_index": chunk_index,
+                        "result_count": len(items),
+                    },
+                )
             except Exception as exc:
                 fallback_reason = format_chunk_failure_reason(exc)
                 logger.warning(
@@ -149,6 +185,23 @@ async def score_video_comments(video: dict, comments: list[str]) -> list[dict]:
                         global_index=offset + local_index,
                     )
                 )
+            chunk_results = all_results[offset : offset + len(chunk)]
+            chunk_high_value_count = sum(
+                1
+                for item in chunk_results
+                if item.get("confidence", 0.0) >= settings.miner_comment_confidence_threshold
+                and (item.get("is_meme_candidate") or item.get("is_insider_knowledge"))
+            )
+            logger.info(
+                "miner comment chunk completed",
+                extra={
+                    "event": "miner_chunk_completed",
+                    "bvid": str(video.get("bvid", "")).strip(),
+                    "chunk_index": chunk_index,
+                    "comment_count": len(chunk_results),
+                    "high_value_count": chunk_high_value_count,
+                },
+            )
     except Exception as exc:
         logger.exception(
             "miner video analysis failed",
@@ -177,6 +230,21 @@ async def score_video_comments(video: dict, comments: list[str]) -> list[dict]:
         results=all_results,
         conversation_messages=conversation_messages,
     )
+    logger.info(
+        "miner video analysis completed",
+        extra={
+            "event": "miner_video_analysis_completed",
+            "bvid": str(video.get("bvid", "")).strip(),
+            "result_count": len(all_results),
+            "high_value_count": sum(
+                1
+                for item in all_results
+                if item.get("confidence", 0.0) >= settings.miner_comment_confidence_threshold
+                and (item.get("is_meme_candidate") or item.get("is_insider_knowledge"))
+            ),
+            "conversation_id": conversation_id,
+        },
+    )
     return all_results
 
 
@@ -186,19 +254,18 @@ async def request_chunk_comment_scores(
     user_msg: str,
     model_name: str,
 ) -> str:
-    resp = await client.chat.completions.create(
-        model=model_name,
+    return await request_json_chat_completion(
+        client=client,
+        model_name=model_name,
         messages=[
             {"role": "system", "content": _MINER_SYSTEM},
             {"role": "user", "content": user_msg},
         ],
-        response_format={"type": "json_object"},
     )
-    return resp.choices[0].message.content or "{}"
 
 
 def extract_chunk_items(raw: str) -> list[dict]:
-    data = json.loads(raw)
+    data = load_json_response(raw)
     items = data if isinstance(data, list) else data.get("results", [])
     if not isinstance(items, list):
         return []
