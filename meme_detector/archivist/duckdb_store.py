@@ -1,5 +1,5 @@
 """
-DuckDB 存储层：管理词频时序数据和候选词队列。
+DuckDB 存储层：管理采集快照、评论证据包与运行审计数据。
 """
 
 from __future__ import annotations
@@ -20,17 +20,6 @@ from meme_detector.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
-_CREATE_WORD_FREQ = """
-CREATE TABLE IF NOT EXISTS word_freq (
-    word        TEXT    NOT NULL,
-    date        DATE    NOT NULL,
-    partition   TEXT    NOT NULL,
-    freq        INTEGER NOT NULL,
-    doc_count   INTEGER NOT NULL,
-    PRIMARY KEY (word, date, partition)
-);
-"""
-
 _CREATE_SCOUT_RAW_VIDEOS = """
 CREATE TABLE IF NOT EXISTS scout_raw_videos (
     bvid                  TEXT      NOT NULL,
@@ -42,10 +31,14 @@ CREATE TABLE IF NOT EXISTS scout_raw_videos (
     tags_json             TEXT      DEFAULT '[]',
     comments_json         TEXT      DEFAULT '[]',
     comment_count         INTEGER   DEFAULT 0,
-    candidate_status      TEXT      NOT NULL DEFAULT 'pending',
-    candidate_extracted_at TIMESTAMP,
+    research_status       TEXT      NOT NULL DEFAULT 'pending',
+    research_started_at   TIMESTAMP,
     miner_status          TEXT      NOT NULL DEFAULT 'pending',
+    miner_started_at      TIMESTAMP,
     miner_processed_at    TIMESTAMP,
+    miner_failed_at       TIMESTAMP,
+    miner_last_error      TEXT      DEFAULT '',
+    miner_attempt_count   INTEGER   NOT NULL DEFAULT 0,
     created_at            TIMESTAMP DEFAULT NOW(),
     updated_at            TIMESTAMP DEFAULT NOW(),
     PRIMARY KEY (bvid, collected_date)
@@ -108,27 +101,6 @@ CREATE TABLE IF NOT EXISTS comment_media_links (
 );
 """
 
-_CREATE_CANDIDATES = """
-CREATE TABLE IF NOT EXISTS candidates (
-    word          TEXT      PRIMARY KEY,
-    score         DOUBLE    NOT NULL,
-    is_new_word   BOOLEAN   NOT NULL,
-    sample_comments TEXT    DEFAULT '',
-    explanation   TEXT      DEFAULT '',
-    video_refs_json TEXT    DEFAULT '[]',
-    detected_at   TIMESTAMP DEFAULT NOW(),
-    status        TEXT      DEFAULT 'pending'
-);
-"""
-
-_MIGRATE_CANDIDATES_EXPLANATION = """
-ALTER TABLE candidates ADD COLUMN IF NOT EXISTS explanation TEXT DEFAULT '';
-"""
-
-_MIGRATE_CANDIDATES_VIDEO_REFS = """
-ALTER TABLE candidates ADD COLUMN IF NOT EXISTS video_refs_json TEXT DEFAULT '[]';
-"""
-
 _MIGRATE_SCOUT_RAW_VIDEOS_TAGS = """
 ALTER TABLE scout_raw_videos ADD COLUMN IF NOT EXISTS tags_json TEXT DEFAULT '[]';
 """
@@ -139,6 +111,30 @@ ALTER TABLE scout_raw_videos ADD COLUMN IF NOT EXISTS miner_status TEXT DEFAULT 
 
 _MIGRATE_SCOUT_RAW_VIDEOS_MINER_PROCESSED_AT = """
 ALTER TABLE scout_raw_videos ADD COLUMN IF NOT EXISTS miner_processed_at TIMESTAMP;
+"""
+
+_MIGRATE_SCOUT_RAW_VIDEOS_MINER_STARTED_AT = """
+ALTER TABLE scout_raw_videos ADD COLUMN IF NOT EXISTS miner_started_at TIMESTAMP;
+"""
+
+_MIGRATE_SCOUT_RAW_VIDEOS_MINER_FAILED_AT = """
+ALTER TABLE scout_raw_videos ADD COLUMN IF NOT EXISTS miner_failed_at TIMESTAMP;
+"""
+
+_MIGRATE_SCOUT_RAW_VIDEOS_MINER_LAST_ERROR = """
+ALTER TABLE scout_raw_videos ADD COLUMN IF NOT EXISTS miner_last_error TEXT DEFAULT '';
+"""
+
+_MIGRATE_SCOUT_RAW_VIDEOS_MINER_ATTEMPT_COUNT = """
+ALTER TABLE scout_raw_videos ADD COLUMN IF NOT EXISTS miner_attempt_count INTEGER DEFAULT 0;
+"""
+
+_MIGRATE_SCOUT_RAW_VIDEOS_RESEARCH_STATUS = """
+ALTER TABLE scout_raw_videos ADD COLUMN IF NOT EXISTS research_status TEXT DEFAULT 'pending';
+"""
+
+_MIGRATE_SCOUT_RAW_VIDEOS_RESEARCH_STARTED_AT = """
+ALTER TABLE scout_raw_videos ADD COLUMN IF NOT EXISTS research_started_at TIMESTAMP;
 """
 
 _CREATE_MEME_RECORDS = """
@@ -216,6 +212,104 @@ CREATE TABLE IF NOT EXISTS miner_comment_insights (
 );
 """
 
+_CREATE_COMMENT_INSIGHTS = """
+CREATE TABLE IF NOT EXISTS comment_insights (
+    bundle_id               TEXT      PRIMARY KEY,
+    insight_id              TEXT      NOT NULL UNIQUE,
+    bvid                    TEXT      NOT NULL,
+    collected_date          DATE      NOT NULL,
+    comment_text            TEXT      NOT NULL,
+    worth_investigating     BOOLEAN   NOT NULL DEFAULT FALSE,
+    signal_score            DOUBLE    NOT NULL DEFAULT 0,
+    reason                  TEXT      DEFAULT '',
+    status                  TEXT      NOT NULL DEFAULT 'pending',
+    video_refs_json         TEXT      DEFAULT '[]',
+    miner_summary_json      TEXT      DEFAULT '{}',
+    created_at              TIMESTAMP DEFAULT NOW(),
+    updated_at              TIMESTAMP DEFAULT NOW()
+);
+"""
+
+_CREATE_COMMENT_SPANS = """
+CREATE TABLE IF NOT EXISTS comment_spans (
+    span_id                 TEXT      PRIMARY KEY,
+    insight_id              TEXT      NOT NULL,
+    raw_text                TEXT      NOT NULL,
+    normalized_text         TEXT      NOT NULL,
+    span_type               TEXT      NOT NULL,
+    char_start              INTEGER,
+    char_end                INTEGER,
+    confidence              DOUBLE    NOT NULL DEFAULT 0,
+    is_primary              BOOLEAN   NOT NULL DEFAULT FALSE,
+    query_priority          TEXT      NOT NULL DEFAULT 'low',
+    reason                  TEXT      DEFAULT '',
+    created_at              TIMESTAMP DEFAULT NOW(),
+    updated_at              TIMESTAMP DEFAULT NOW()
+);
+"""
+
+_CREATE_HYPOTHESES = """
+CREATE TABLE IF NOT EXISTS hypotheses (
+    hypothesis_id           TEXT      PRIMARY KEY,
+    bundle_id               TEXT      NOT NULL,
+    insight_id              TEXT      NOT NULL,
+    candidate_title         TEXT      NOT NULL,
+    hypothesis_type         TEXT      NOT NULL,
+    miner_opinion           TEXT      DEFAULT '',
+    support_score           DOUBLE    NOT NULL DEFAULT 0,
+    counter_score           DOUBLE    NOT NULL DEFAULT 0,
+    uncertainty_score       DOUBLE    NOT NULL DEFAULT 0,
+    suggested_action        TEXT      NOT NULL DEFAULT 'search_optional',
+    status                  TEXT      NOT NULL DEFAULT 'pending',
+    created_at              TIMESTAMP DEFAULT NOW(),
+    updated_at              TIMESTAMP DEFAULT NOW()
+);
+"""
+
+_CREATE_HYPOTHESIS_SPANS = """
+CREATE TABLE IF NOT EXISTS hypothesis_spans (
+    hypothesis_id           TEXT      NOT NULL,
+    span_id                 TEXT      NOT NULL,
+    role                    TEXT      NOT NULL DEFAULT 'related',
+    PRIMARY KEY (hypothesis_id, span_id)
+);
+"""
+
+_CREATE_EVIDENCES = """
+CREATE TABLE IF NOT EXISTS evidences (
+    evidence_id             TEXT      PRIMARY KEY,
+    hypothesis_id           TEXT      NOT NULL,
+    span_id                 TEXT,
+    query                   TEXT      NOT NULL,
+    query_mode              TEXT      NOT NULL,
+    source_kind             TEXT      NOT NULL,
+    source_title            TEXT      DEFAULT '',
+    source_url              TEXT      DEFAULT '',
+    snippet                 TEXT      DEFAULT '',
+    evidence_direction      TEXT      NOT NULL,
+    evidence_strength       DOUBLE    NOT NULL DEFAULT 0,
+    created_at              TIMESTAMP DEFAULT NOW()
+);
+"""
+
+_CREATE_RESEARCH_DECISIONS = """
+CREATE TABLE IF NOT EXISTS research_decisions (
+    decision_id             TEXT      PRIMARY KEY,
+    bundle_id               TEXT      NOT NULL,
+    hypothesis_id           TEXT      NOT NULL,
+    decision                TEXT      NOT NULL,
+    final_title             TEXT      DEFAULT '',
+    target_record_id        TEXT      DEFAULT '',
+    confidence              DOUBLE    NOT NULL DEFAULT 0,
+    reason                  TEXT      DEFAULT '',
+    evidence_summary_json   TEXT      DEFAULT '{}',
+    assessment_json         TEXT      DEFAULT '{}',
+    record_json             TEXT      DEFAULT '{}',
+    created_at              TIMESTAMP DEFAULT NOW(),
+    updated_at              TIMESTAMP DEFAULT NOW()
+);
+"""
+
 _CREATE_AGENT_CONVERSATIONS = """
 CREATE TABLE IF NOT EXISTS agent_conversations (
     id             TEXT PRIMARY KEY,
@@ -244,26 +338,22 @@ def get_conn() -> duckdb.DuckDBPyConnection:
 
 
 def _ensure_schema(conn: duckdb.DuckDBPyConnection) -> None:
-    conn.execute(_CREATE_WORD_FREQ)
     conn.execute(_CREATE_SCOUT_RAW_VIDEOS)
     conn.execute(_CREATE_SCOUT_RAW_COMMENTS)
     conn.execute(_CREATE_MEDIA_ASSETS)
     conn.execute(_CREATE_COMMENT_MEDIA_LINKS)
-    conn.execute(_CREATE_CANDIDATES)
     conn.execute(_CREATE_MEME_RECORDS)
     conn.execute(_CREATE_PIPELINE_RUNS)
     conn.execute(_CREATE_VIDEO_CONTEXT_CACHE)
     conn.execute(_CREATE_MINER_COMMENT_INSIGHTS)
+    conn.execute(_CREATE_COMMENT_INSIGHTS)
+    conn.execute(_CREATE_COMMENT_SPANS)
+    conn.execute(_CREATE_HYPOTHESES)
+    conn.execute(_CREATE_HYPOTHESIS_SPANS)
+    conn.execute(_CREATE_EVIDENCES)
+    conn.execute(_CREATE_RESEARCH_DECISIONS)
     conn.execute(_CREATE_AGENT_CONVERSATIONS)
     # 兼容旧库：补充新增列
-    try:
-        conn.execute(_MIGRATE_CANDIDATES_EXPLANATION)
-    except Exception:
-        pass
-    try:
-        conn.execute(_MIGRATE_CANDIDATES_VIDEO_REFS)
-    except Exception:
-        pass
     try:
         conn.execute(_MIGRATE_SCOUT_RAW_VIDEOS_TAGS)
     except Exception:
@@ -276,34 +366,72 @@ def _ensure_schema(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute(_MIGRATE_SCOUT_RAW_VIDEOS_MINER_PROCESSED_AT)
     except Exception:
         pass
+    try:
+        conn.execute(_MIGRATE_SCOUT_RAW_VIDEOS_MINER_STARTED_AT)
+    except Exception:
+        pass
+    try:
+        conn.execute(_MIGRATE_SCOUT_RAW_VIDEOS_MINER_FAILED_AT)
+    except Exception:
+        pass
+    try:
+        conn.execute(_MIGRATE_SCOUT_RAW_VIDEOS_MINER_LAST_ERROR)
+    except Exception:
+        pass
+    try:
+        conn.execute(_MIGRATE_SCOUT_RAW_VIDEOS_MINER_ATTEMPT_COUNT)
+    except Exception:
+        pass
+    try:
+        _rename_column_if_present(
+            conn,
+            table_name="scout_raw_videos",
+            old_name="candidate_status",
+            new_name="research_status",
+        )
+    except Exception:
+        pass
+    try:
+        _rename_column_if_present(
+            conn,
+            table_name="scout_raw_videos",
+            old_name="candidate_extracted_at",
+            new_name="research_started_at",
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(_MIGRATE_SCOUT_RAW_VIDEOS_RESEARCH_STATUS)
+    except Exception:
+        pass
+    try:
+        conn.execute(_MIGRATE_SCOUT_RAW_VIDEOS_RESEARCH_STARTED_AT)
+    except Exception:
+        pass
 
 
-def upsert_word_freq(
+def _column_exists(
     conn: duckdb.DuckDBPyConnection,
-    records: list[dict],
-    partition: str,
-    target_date: date,
+    *,
+    table_name: str,
+    column_name: str,
+) -> bool:
+    rows = conn.execute(f"PRAGMA table_info('{table_name}')").fetchall()
+    return any(str(row[1]).strip() == column_name for row in rows)
+
+
+def _rename_column_if_present(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    table_name: str,
+    old_name: str,
+    new_name: str,
 ) -> None:
-    """
-    批量写入词频数据。
-    records: [{"word": str, "freq": int, "doc_count": int}, ...]
-    """
-    if not records:
+    if _column_exists(conn, table_name=table_name, column_name=new_name):
         return
-    rows = [
-        (r["word"], target_date, partition, r["freq"], r["doc_count"])
-        for r in records
-    ]
-    conn.executemany(
-        """
-        INSERT INTO word_freq (word, date, partition, freq, doc_count)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT (word, date, partition) DO UPDATE
-            SET freq = excluded.freq,
-                doc_count = excluded.doc_count
-        """,
-        rows,
-    )
+    if not _column_exists(conn, table_name=table_name, column_name=old_name):
+        return
+    conn.execute(f"ALTER TABLE {table_name} RENAME COLUMN {old_name} TO {new_name}")
 
 
 def upsert_scout_raw_videos(
@@ -420,14 +548,18 @@ def upsert_scout_raw_videos(
                 tags_json,
                 comments_json,
                 comment_count,
-                candidate_status,
-                candidate_extracted_at,
+                research_status,
+                research_started_at,
                 miner_status,
+                miner_started_at,
                 miner_processed_at,
+                miner_failed_at,
+                miner_last_error,
+                miner_attempt_count,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, 'pending', NULL, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, 'pending', NULL, NULL, NULL, '', 0, ?, ?)
             ON CONFLICT (bvid, collected_date) DO UPDATE
             SET partition = excluded.partition,
                 title = excluded.title,
@@ -436,10 +568,14 @@ def upsert_scout_raw_videos(
                 tags_json = excluded.tags_json,
                 comments_json = excluded.comments_json,
                 comment_count = excluded.comment_count,
-                candidate_status = 'pending',
-                candidate_extracted_at = NULL,
+                research_status = 'pending',
+                research_started_at = NULL,
                 miner_status = 'pending',
+                miner_started_at = NULL,
                 miner_processed_at = NULL,
+                miner_failed_at = NULL,
+                miner_last_error = '',
+                miner_attempt_count = 0,
                 updated_at = excluded.updated_at
             """,
             [*row, row[-1]],
@@ -919,6 +1055,13 @@ def upsert_miner_comment_insights(
         tags = item.get("tags", [])
         if not isinstance(tags, list):
             tags = []
+        status = str(item.get("status", "")).strip()
+        if not status:
+            is_high_value = (
+                float(item.get("confidence", 0.0) or 0.0) >= settings.miner_comment_confidence_threshold
+                and (bool(item.get("is_meme_candidate")) or bool(item.get("is_insider_knowledge")))
+            )
+            status = "pending_bundle" if is_high_value else "discarded"
         rows.append(
             (
                 insight_id,
@@ -935,6 +1078,7 @@ def upsert_miner_comment_insights(
                 bool(item.get("is_insider_knowledge")),
                 str(item.get("reason", "")).strip(),
                 json.dumps(item.get("video_context") or {}, ensure_ascii=False),
+                status,
                 now,
                 now,
             )
@@ -964,7 +1108,7 @@ def upsert_miner_comment_insights(
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (insight_id) DO UPDATE
         SET partition = excluded.partition,
             title = excluded.title,
@@ -979,8 +1123,9 @@ def upsert_miner_comment_insights(
             video_context_json = excluded.video_context_json,
             updated_at = excluded.updated_at,
             status = CASE
-                WHEN miner_comment_insights.status = 'processed' THEN miner_comment_insights.status
-                ELSE 'pending'
+                WHEN miner_comment_insights.status = 'bundled' THEN miner_comment_insights.status
+                WHEN miner_comment_insights.status = 'bundling' THEN miner_comment_insights.status
+                ELSE excluded.status
             END
         """,
         rows,
@@ -1009,10 +1154,11 @@ def get_pending_miner_comment_insights(
             is_insider_knowledge,
             reason,
             video_context_json,
+            status,
             created_at,
             updated_at
         FROM miner_comment_insights
-        WHERE status = 'pending'
+        WHERE status IN ('pending_bundle', 'bundle_failed')
         ORDER BY confidence DESC, collected_date ASC, bvid ASC
         LIMIT ?
         """,
@@ -1034,8 +1180,9 @@ def get_pending_miner_comment_insights(
             "is_insider_knowledge": row[11],
             "reason": row[12],
             "video_context": _load_json_text(row[13], default={}),
-            "created_at": row[14],
-            "updated_at": row[15],
+            "status": row[14],
+            "created_at": row[15],
+            "updated_at": row[16],
         }
         for row in rows
     ]
@@ -1096,7 +1243,17 @@ def get_miner_comment_insights_page(
             video_context_json,
             status,
             created_at,
-            updated_at
+            updated_at,
+            (
+                SELECT bundle_id
+                FROM comment_insights bundles
+                WHERE bundles.insight_id = miner_comment_insights.insight_id
+            ) AS bundle_id,
+            (
+                SELECT status
+                FROM comment_insights bundles
+                WHERE bundles.insight_id = miner_comment_insights.insight_id
+            ) AS bundle_status
         FROM miner_comment_insights
         {where_clause}
         ORDER BY collected_date DESC, confidence DESC, updated_at DESC, bvid ASC
@@ -1138,7 +1295,17 @@ def get_miner_comment_insight(
             video_context_json,
             status,
             created_at,
-            updated_at
+            updated_at,
+            (
+                SELECT bundle_id
+                FROM comment_insights bundles
+                WHERE bundles.insight_id = miner_comment_insights.insight_id
+            ) AS bundle_id,
+            (
+                SELECT status
+                FROM comment_insights bundles
+                WHERE bundles.insight_id = miner_comment_insights.insight_id
+            ) AS bundle_status
         FROM miner_comment_insights
         WHERE insight_id = ?
         """,
@@ -1167,7 +1334,7 @@ def mark_miner_comment_insights_processed(
     conn.executemany(
         """
         UPDATE miner_comment_insights
-        SET status = 'processed',
+        SET status = 'bundled',
             updated_at = ?
         WHERE insight_id = ?
         """,
@@ -1175,12 +1342,866 @@ def mark_miner_comment_insights_processed(
     )
 
 
+def mark_miner_comment_insights_bundling(
+    conn: duckdb.DuckDBPyConnection,
+    insights: list[dict],
+) -> None:
+    rows = []
+    now = datetime.now()
+    for item in insights:
+        insight_id = str(item.get("insight_id", "")).strip()
+        if not insight_id:
+            continue
+        rows.append((now, insight_id))
+
+    if not rows:
+        return
+
+    conn.executemany(
+        """
+        UPDATE miner_comment_insights
+        SET status = 'bundling',
+            updated_at = ?
+        WHERE insight_id = ?
+        """,
+        rows,
+    )
+
+
+def mark_miner_comment_insights_bundle_failed(
+    conn: duckdb.DuckDBPyConnection,
+    insights: list[dict],
+) -> None:
+    rows = []
+    now = datetime.now()
+    for item in insights:
+        insight_id = str(item.get("insight_id", "")).strip()
+        if not insight_id:
+            continue
+        rows.append((now, insight_id))
+
+    if not rows:
+        return
+
+    conn.executemany(
+        """
+        UPDATE miner_comment_insights
+        SET status = 'bundle_failed',
+            updated_at = ?
+        WHERE insight_id = ?
+        """,
+        rows,
+    )
+
+
+def upsert_comment_bundle(
+    conn: duckdb.DuckDBPyConnection,
+    bundle,
+) -> None:
+    """写入或刷新一条评论证据包。"""
+    from meme_detector.pipeline_models import MinerBundle
+
+    if not isinstance(bundle, MinerBundle):
+        bundle = MinerBundle.model_validate(bundle)
+
+    now = datetime.now()
+    insight = bundle.insight
+    conn.execute(
+        """
+        INSERT INTO comment_insights (
+            bundle_id,
+            insight_id,
+            bvid,
+            collected_date,
+            comment_text,
+            worth_investigating,
+            signal_score,
+            reason,
+            status,
+            video_refs_json,
+            miner_summary_json,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (bundle_id) DO UPDATE
+        SET insight_id = excluded.insight_id,
+            bvid = excluded.bvid,
+            collected_date = excluded.collected_date,
+            comment_text = excluded.comment_text,
+            worth_investigating = excluded.worth_investigating,
+            signal_score = excluded.signal_score,
+            reason = excluded.reason,
+            status = excluded.status,
+            video_refs_json = excluded.video_refs_json,
+            miner_summary_json = excluded.miner_summary_json,
+            updated_at = excluded.updated_at
+        """,
+        [
+            bundle.bundle_id,
+            insight.insight_id,
+            insight.bvid,
+            insight.collected_date,
+            insight.comment_text,
+            insight.worth_investigating,
+            insight.signal_score,
+            insight.reason,
+            insight.status.value,
+            json.dumps([item.model_dump(mode="json") for item in bundle.video_refs], ensure_ascii=False),
+            json.dumps(bundle.miner_summary.model_dump(mode="json"), ensure_ascii=False),
+            now,
+            now,
+        ],
+    )
+
+    existing_hypothesis_rows = conn.execute(
+        """
+        SELECT hypothesis_id
+        FROM hypotheses
+        WHERE bundle_id = ?
+        """,
+        [bundle.bundle_id],
+    ).fetchall()
+    existing_hypothesis_ids = [str(row[0]).strip() for row in existing_hypothesis_rows if str(row[0]).strip()]
+    if existing_hypothesis_ids:
+        placeholders = ", ".join("?" for _ in existing_hypothesis_ids)
+        conn.execute(
+            f"DELETE FROM evidences WHERE hypothesis_id IN ({placeholders})",
+            existing_hypothesis_ids,
+        )
+        conn.execute(
+            f"DELETE FROM hypothesis_spans WHERE hypothesis_id IN ({placeholders})",
+            existing_hypothesis_ids,
+        )
+    conn.execute(
+        "DELETE FROM hypotheses WHERE bundle_id = ?",
+        [bundle.bundle_id],
+    )
+    conn.execute(
+        "DELETE FROM comment_spans WHERE insight_id = ?",
+        [insight.insight_id],
+    )
+
+    if bundle.spans:
+        conn.executemany(
+            """
+            INSERT INTO comment_spans (
+                span_id,
+                insight_id,
+                raw_text,
+                normalized_text,
+                span_type,
+                char_start,
+                char_end,
+                confidence,
+                is_primary,
+                query_priority,
+                reason,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    item.span_id,
+                    item.insight_id,
+                    item.raw_text,
+                    item.normalized_text,
+                    item.span_type.value,
+                    item.char_start,
+                    item.char_end,
+                    item.confidence,
+                    item.is_primary,
+                    item.query_priority.value,
+                    item.reason,
+                    now,
+                    now,
+                )
+                for item in bundle.spans
+            ],
+        )
+
+    if bundle.hypotheses:
+        conn.executemany(
+            """
+            INSERT INTO hypotheses (
+                hypothesis_id,
+                bundle_id,
+                insight_id,
+                candidate_title,
+                hypothesis_type,
+                miner_opinion,
+                support_score,
+                counter_score,
+                uncertainty_score,
+                suggested_action,
+                status,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    item.hypothesis_id,
+                    bundle.bundle_id,
+                    item.insight_id,
+                    item.candidate_title,
+                    item.hypothesis_type.value,
+                    item.miner_opinion,
+                    item.support_score,
+                    item.counter_score,
+                    item.uncertainty_score,
+                    item.suggested_action.value,
+                    item.status.value,
+                    now,
+                    now,
+                )
+                for item in bundle.hypotheses
+            ],
+        )
+
+    if bundle.hypothesis_spans:
+        conn.executemany(
+            """
+            INSERT INTO hypothesis_spans (
+                hypothesis_id,
+                span_id,
+                role
+            )
+            VALUES (?, ?, ?)
+            """,
+            [
+                (
+                    item.hypothesis_id,
+                    item.span_id,
+                    item.role.value,
+                )
+                for item in bundle.hypothesis_spans
+            ],
+        )
+
+    if bundle.evidences:
+        conn.executemany(
+            """
+            INSERT INTO evidences (
+                evidence_id,
+                hypothesis_id,
+                span_id,
+                query,
+                query_mode,
+                source_kind,
+                source_title,
+                source_url,
+                snippet,
+                evidence_direction,
+                evidence_strength,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    item.evidence_id,
+                    item.hypothesis_id,
+                    item.span_id,
+                    item.query,
+                    item.query_mode.value,
+                    item.source_kind.value,
+                    item.source_title,
+                    item.source_url,
+                    item.snippet,
+                    item.evidence_direction.value,
+                    item.evidence_strength,
+                    now,
+                )
+                for item in bundle.evidences
+            ],
+        )
+
+
+def get_comment_bundle(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    bundle_id: str | None = None,
+    insight_id: str | None = None,
+):
+    """读取一条评论证据包。"""
+    from meme_detector.pipeline_models import (
+        Evidence,
+        Hypothesis,
+        HypothesisSpanLink,
+        Insight,
+        MinerBundle,
+        MinerSummary,
+        Span,
+        VideoRef,
+    )
+
+    if not bundle_id and not insight_id:
+        raise ValueError("bundle_id or insight_id is required")
+
+    if bundle_id:
+        row = conn.execute(
+            """
+            SELECT
+                bundle_id,
+                insight_id,
+                bvid,
+                collected_date,
+                comment_text,
+                worth_investigating,
+                signal_score,
+                reason,
+                status,
+                video_refs_json,
+                miner_summary_json
+            FROM comment_insights
+            WHERE bundle_id = ?
+            """,
+            [bundle_id],
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT
+                bundle_id,
+                insight_id,
+                bvid,
+                collected_date,
+                comment_text,
+                worth_investigating,
+                signal_score,
+                reason,
+                status,
+                video_refs_json,
+                miner_summary_json
+            FROM comment_insights
+            WHERE insight_id = ?
+            """,
+            [insight_id],
+        ).fetchone()
+
+    if not row:
+        return None
+
+    resolved_bundle_id = str(row[0]).strip()
+    resolved_insight_id = str(row[1]).strip()
+    insight = Insight(
+        insight_id=resolved_insight_id,
+        bvid=str(row[2]).strip(),
+        collected_date=row[3],
+        comment_text=str(row[4]).strip(),
+        worth_investigating=bool(row[5]),
+        signal_score=float(row[6] or 0.0),
+        reason=str(row[7] or "").strip(),
+        status=str(row[8] or "pending"),
+    )
+    video_refs = [
+        VideoRef.model_validate(item)
+        for item in _load_json_text(row[9], default=[])
+        if isinstance(item, dict)
+    ]
+    miner_summary = MinerSummary.model_validate(_load_json_text(row[10], default={}))
+
+    span_rows = conn.execute(
+        """
+        SELECT
+            span_id,
+            insight_id,
+            raw_text,
+            normalized_text,
+            span_type,
+            char_start,
+            char_end,
+            confidence,
+            is_primary,
+            query_priority,
+            reason
+        FROM comment_spans
+        WHERE insight_id = ?
+        ORDER BY is_primary DESC, confidence DESC, span_id ASC
+        """,
+        [resolved_insight_id],
+    ).fetchall()
+    spans = [
+        Span(
+            span_id=str(item[0]).strip(),
+            insight_id=str(item[1]).strip(),
+            raw_text=str(item[2]).strip(),
+            normalized_text=str(item[3]).strip(),
+            span_type=str(item[4]).strip(),
+            char_start=item[5],
+            char_end=item[6],
+            confidence=float(item[7] or 0.0),
+            is_primary=bool(item[8]),
+            query_priority=str(item[9] or "low"),
+            reason=str(item[10] or "").strip(),
+        )
+        for item in span_rows
+    ]
+
+    hypothesis_rows = conn.execute(
+        """
+        SELECT
+            hypothesis_id,
+            insight_id,
+            candidate_title,
+            hypothesis_type,
+            miner_opinion,
+            support_score,
+            counter_score,
+            uncertainty_score,
+            suggested_action,
+            status
+        FROM hypotheses
+        WHERE bundle_id = ?
+        ORDER BY support_score DESC, counter_score ASC, hypothesis_id ASC
+        """,
+        [resolved_bundle_id],
+    ).fetchall()
+    hypotheses = [
+        Hypothesis(
+            hypothesis_id=str(item[0]).strip(),
+            insight_id=str(item[1]).strip(),
+            candidate_title=str(item[2]).strip(),
+            hypothesis_type=str(item[3]).strip(),
+            miner_opinion=str(item[4] or "").strip(),
+            support_score=float(item[5] or 0.0),
+            counter_score=float(item[6] or 0.0),
+            uncertainty_score=float(item[7] or 0.0),
+            suggested_action=str(item[8] or "search_optional"),
+            status=str(item[9] or "pending"),
+        )
+        for item in hypothesis_rows
+    ]
+
+    if hypotheses:
+        hypothesis_ids = [item.hypothesis_id for item in hypotheses]
+        placeholders = ", ".join("?" for _ in hypothesis_ids)
+        link_rows = conn.execute(
+            f"""
+            SELECT
+                hypothesis_id,
+                span_id,
+                role
+            FROM hypothesis_spans
+            WHERE hypothesis_id IN ({placeholders})
+            ORDER BY hypothesis_id ASC, span_id ASC
+            """,
+            hypothesis_ids,
+        ).fetchall()
+        evidence_rows = conn.execute(
+            f"""
+            SELECT
+                evidence_id,
+                hypothesis_id,
+                span_id,
+                query,
+                query_mode,
+                source_kind,
+                source_title,
+                source_url,
+                snippet,
+                evidence_direction,
+                evidence_strength
+            FROM evidences
+            WHERE hypothesis_id IN ({placeholders})
+            ORDER BY hypothesis_id ASC, evidence_strength DESC, evidence_id ASC
+            """,
+            hypothesis_ids,
+        ).fetchall()
+    else:
+        link_rows = []
+        evidence_rows = []
+
+    hypothesis_spans = [
+        HypothesisSpanLink(
+            hypothesis_id=str(item[0]).strip(),
+            span_id=str(item[1]).strip(),
+            role=str(item[2]).strip(),
+        )
+        for item in link_rows
+    ]
+    evidences = [
+        Evidence(
+            evidence_id=str(item[0]).strip(),
+            hypothesis_id=str(item[1]).strip(),
+            span_id=str(item[2]).strip() or None,
+            query=str(item[3]).strip(),
+            query_mode=str(item[4]).strip(),
+            source_kind=str(item[5]).strip(),
+            source_title=str(item[6] or "").strip(),
+            source_url=str(item[7] or "").strip(),
+            snippet=str(item[8] or "").strip(),
+            evidence_direction=str(item[9]).strip(),
+            evidence_strength=float(item[10] or 0.0),
+        )
+        for item in evidence_rows
+    ]
+
+    return MinerBundle(
+        bundle_id=resolved_bundle_id,
+        insight=insight,
+        video_refs=video_refs,
+        spans=spans,
+        hypotheses=hypotheses,
+        hypothesis_spans=hypothesis_spans,
+        evidences=evidences,
+        miner_summary=miner_summary,
+    )
+
+
+def upsert_research_decision(
+    conn: duckdb.DuckDBPyConnection,
+    decision,
+    *,
+    persist_record: bool = False,
+) -> None:
+    """写入 Research 裁决结果，并同步 hypothesis / insight 状态。"""
+    from meme_detector.pipeline_models import ResearchDecision, ResearchDecisionType
+
+    if not isinstance(decision, ResearchDecision):
+        decision = ResearchDecision.model_validate(decision)
+
+    now = datetime.now()
+    conn.execute(
+        """
+        INSERT INTO research_decisions (
+            decision_id,
+            bundle_id,
+            hypothesis_id,
+            decision,
+            final_title,
+            target_record_id,
+            confidence,
+            reason,
+            evidence_summary_json,
+            assessment_json,
+            record_json,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (decision_id) DO UPDATE
+        SET bundle_id = excluded.bundle_id,
+            hypothesis_id = excluded.hypothesis_id,
+            decision = excluded.decision,
+            final_title = excluded.final_title,
+            target_record_id = excluded.target_record_id,
+            confidence = excluded.confidence,
+            reason = excluded.reason,
+            evidence_summary_json = excluded.evidence_summary_json,
+            assessment_json = excluded.assessment_json,
+            record_json = excluded.record_json,
+            updated_at = excluded.updated_at
+        """,
+        [
+            decision.decision_id,
+            decision.bundle_id,
+            decision.target_hypothesis_id,
+            decision.decision.value,
+            decision.final_title,
+            decision.target_record_id,
+            decision.confidence,
+            decision.reason,
+            json.dumps(decision.evidence_summary.model_dump(mode="json"), ensure_ascii=False),
+            json.dumps(decision.assessment.model_dump(mode="json"), ensure_ascii=False),
+            json.dumps(decision.record.model_dump(mode="json"), ensure_ascii=False) if decision.record else "{}",
+            now,
+            now,
+        ],
+    )
+
+    status_by_decision = {
+        ResearchDecisionType.accept: "accepted",
+        ResearchDecisionType.rewrite_title: "accepted",
+        ResearchDecisionType.reject: "rejected",
+        ResearchDecisionType.manual_review: "manual_review",
+        ResearchDecisionType.merge_into_existing: "merged",
+    }
+    conn.execute(
+        """
+        UPDATE hypotheses
+        SET status = ?,
+            updated_at = ?
+        WHERE hypothesis_id = ?
+        """,
+        [status_by_decision[decision.decision], now, decision.target_hypothesis_id],
+    )
+    conn.execute(
+        """
+        UPDATE comment_insights
+        SET status = 'researched',
+            updated_at = ?
+        WHERE bundle_id = ?
+        """,
+        [now, decision.bundle_id],
+    )
+    if persist_record and decision.record is not None:
+        upsert_meme_record(conn, decision.record)
+
+
+def get_research_decision(
+    conn: duckdb.DuckDBPyConnection,
+    decision_id: str,
+):
+    """读取单条 Research 裁决结果。"""
+    from meme_detector.pipeline_models import (
+        EvidenceSummary,
+        ResearchAssessment,
+        ResearchDecision,
+    )
+
+    row = conn.execute(
+        """
+        SELECT
+            decision_id,
+            bundle_id,
+            hypothesis_id,
+            decision,
+            final_title,
+            target_record_id,
+            confidence,
+            reason,
+            evidence_summary_json,
+            assessment_json,
+            record_json
+        FROM research_decisions
+        WHERE decision_id = ?
+        """,
+        [decision_id],
+    ).fetchone()
+    if not row:
+        return None
+
+    record_payload = _load_json_text(row[10], default={})
+    return ResearchDecision(
+        decision_id=str(row[0]).strip(),
+        bundle_id=str(row[1]).strip(),
+        target_hypothesis_id=str(row[2]).strip(),
+        decision=str(row[3]).strip(),
+        final_title=str(row[4] or "").strip(),
+        target_record_id=str(row[5] or "").strip(),
+        confidence=float(row[6] or 0.0),
+        reason=str(row[7] or "").strip(),
+        evidence_summary=EvidenceSummary.model_validate(_load_json_text(row[8], default={})),
+        assessment=ResearchAssessment.model_validate(_load_json_text(row[9], default={})),
+        record=record_payload if record_payload else None,
+    )
+
+
+def list_queued_comment_bundles(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    limit: int = 50,
+) -> list[dict]:
+    """列出待 Research 裁决的评论证据包。"""
+    rows = conn.execute(
+        """
+        SELECT
+            ci.bundle_id,
+            ci.insight_id,
+            ci.bvid,
+            ci.collected_date,
+            ci.comment_text,
+            ci.signal_score,
+            ci.status,
+            COUNT(h.hypothesis_id) AS hypothesis_count
+        FROM comment_insights ci
+        JOIN hypotheses h ON h.bundle_id = ci.bundle_id
+        WHERE ci.status = 'bundled'
+          AND h.status IN ('queued', 'evidenced')
+        GROUP BY
+            ci.bundle_id,
+            ci.insight_id,
+            ci.bvid,
+            ci.collected_date,
+            ci.comment_text,
+            ci.signal_score,
+            ci.status
+        ORDER BY ci.collected_date ASC, ci.signal_score DESC, ci.bundle_id ASC
+        LIMIT ?
+        """,
+        [limit],
+    ).fetchall()
+    return [
+        {
+            "bundle_id": row[0],
+            "insight_id": row[1],
+            "bvid": row[2],
+            "collected_date": row[3],
+            "comment_text": row[4],
+            "signal_score": float(row[5] or 0.0),
+            "status": row[6],
+            "hypothesis_count": int(row[7] or 0),
+        }
+        for row in rows
+    ]
+
+
+def get_comment_bundles_page(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    status: str | None = None,
+    queued_only: bool = False,
+    keyword: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> dict:
+    """分页获取评论证据包摘要。"""
+    where_parts: list[str] = []
+    params: list[str | int] = []
+    if status:
+        where_parts.append("ci.status = ?")
+        params.append(status)
+    if queued_only:
+        where_parts.append(
+            "EXISTS (SELECT 1 FROM hypotheses hq WHERE hq.bundle_id = ci.bundle_id AND hq.status = 'queued')"
+        )
+    if keyword:
+        where_parts.append("(ci.comment_text LIKE ? OR ci.reason LIKE ? OR ci.bvid LIKE ?)")
+        keyword_like = f"%{keyword}%"
+        params.extend([keyword_like, keyword_like, keyword_like])
+
+    where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM comment_insights ci {where_clause}",
+        params,
+    ).fetchone()[0]
+
+    rows = conn.execute(
+        f"""
+        SELECT
+            ci.bundle_id,
+            ci.insight_id,
+            ci.bvid,
+            ci.collected_date,
+            ci.comment_text,
+            ci.worth_investigating,
+            ci.signal_score,
+            ci.reason,
+            ci.status,
+            ci.video_refs_json,
+            ci.miner_summary_json,
+            COUNT(h.hypothesis_id) AS hypothesis_count,
+            COUNT(h.hypothesis_id) FILTER (WHERE h.status = 'queued') AS queued_hypothesis_count,
+            COUNT(h.hypothesis_id) FILTER (WHERE h.status = 'accepted') AS accepted_hypothesis_count,
+            COUNT(e.evidence_id) AS evidence_count,
+            MAX(rd.decision) AS latest_decision
+        FROM comment_insights ci
+        LEFT JOIN hypotheses h ON h.bundle_id = ci.bundle_id
+        LEFT JOIN evidences e ON e.hypothesis_id = h.hypothesis_id
+        LEFT JOIN research_decisions rd ON rd.bundle_id = ci.bundle_id
+        {where_clause}
+        GROUP BY
+            ci.bundle_id,
+            ci.insight_id,
+            ci.bvid,
+            ci.collected_date,
+            ci.comment_text,
+            ci.worth_investigating,
+            ci.signal_score,
+            ci.reason,
+            ci.status,
+            ci.video_refs_json,
+            ci.miner_summary_json
+        ORDER BY ci.collected_date DESC, ci.signal_score DESC, ci.bundle_id ASC
+        LIMIT ?
+        OFFSET ?
+        """,
+        [*params, limit, offset],
+    ).fetchall()
+
+    items = []
+    for row in rows:
+        miner_summary = _load_json_text(row[10], default={})
+        if not isinstance(miner_summary, dict):
+            miner_summary = {}
+        video_refs = _load_json_text(row[9], default=[])
+        if not isinstance(video_refs, list):
+            video_refs = []
+        items.append(
+            {
+                "bundle_id": row[0],
+                "insight_id": row[1],
+                "bvid": row[2],
+                "collected_date": row[3],
+                "comment_text": row[4],
+                "worth_investigating": bool(row[5]),
+                "signal_score": float(row[6] or 0.0),
+                "reason": row[7],
+                "status": row[8],
+                "video_refs": video_refs,
+                "recommended_hypothesis_id": miner_summary.get("recommended_hypothesis_id"),
+                "miner_summary_reason": miner_summary.get("reason", ""),
+                "hypothesis_count": int(row[11] or 0),
+                "queued_hypothesis_count": int(row[12] or 0),
+                "accepted_hypothesis_count": int(row[13] or 0),
+                "evidence_count": int(row[14] or 0),
+                "latest_decision": row[15] or "",
+            }
+        )
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+def get_comment_bundle_detail(
+    conn: duckdb.DuckDBPyConnection,
+    bundle_id: str,
+) -> dict | None:
+    """获取评论证据包详情及关联裁决。"""
+    bundle = get_comment_bundle(conn, bundle_id=bundle_id)
+    if bundle is None:
+        return None
+
+    decision_rows = conn.execute(
+        """
+        SELECT
+            decision_id,
+            decision,
+            final_title,
+            target_record_id,
+            confidence,
+            reason,
+            created_at
+        FROM research_decisions
+        WHERE bundle_id = ?
+        ORDER BY created_at DESC, decision_id DESC
+        """,
+        [bundle_id],
+    ).fetchall()
+
+    decisions = [
+        {
+            "decision_id": row[0],
+            "decision": row[1],
+            "final_title": row[2],
+            "target_record_id": row[3],
+            "confidence": float(row[4] or 0.0),
+            "reason": row[5],
+            "created_at": row[6],
+        }
+        for row in decision_rows
+    ]
+    return {
+        "bundle": bundle.model_dump(mode="json"),
+        "decisions": decisions,
+    }
+
+
 def get_pending_scout_raw_videos(
     conn: duckdb.DuckDBPyConnection,
     *,
     limit: int | None = None,
 ) -> list[dict]:
-    """获取尚未被 Miner 消费的 Scout 原始视频快照。"""
+    """获取待 Miner 处理或失败待重试的 Scout 原始视频快照。"""
     sql = """
         SELECT
             bvid,
@@ -1193,11 +2214,15 @@ def get_pending_scout_raw_videos(
             comments_json,
             comment_count,
             miner_status,
+            miner_started_at,
             miner_processed_at,
+            miner_failed_at,
+            miner_last_error,
+            miner_attempt_count,
             created_at,
             updated_at
         FROM scout_raw_videos
-        WHERE miner_status = 'pending'
+        WHERE miner_status IN ('pending', 'failed')
         ORDER BY collected_date ASC, bvid ASC
     """
     params: list[int] = []
@@ -1218,12 +2243,48 @@ def get_pending_scout_raw_videos(
             "comments": _load_json_text(row[7], default=[]),
             "comment_count": row[8],
             "miner_status": row[9],
-            "miner_processed_at": row[10],
-            "created_at": row[11],
-            "updated_at": row[12],
+            "miner_started_at": row[10],
+            "miner_processed_at": row[11],
+            "miner_failed_at": row[12],
+            "miner_last_error": row[13] or "",
+            "miner_attempt_count": int(row[14] or 0),
+            "created_at": row[15],
+            "updated_at": row[16],
         }
         for row in rows
     ]
+
+
+def mark_scout_raw_videos_miner_processing(
+    conn: duckdb.DuckDBPyConnection,
+    videos: list[dict],
+) -> None:
+    """将视频标记为 Miner 处理中。"""
+    rows = []
+    now = datetime.now()
+    for video in videos:
+        bvid = str(video.get("bvid", "")).strip()
+        collected_date = video.get("collected_date")
+        if not bvid or not collected_date:
+            continue
+        rows.append((now, now, bvid, collected_date))
+
+    if not rows:
+        return
+
+    conn.executemany(
+        """
+        UPDATE scout_raw_videos
+        SET miner_status = 'processing',
+            miner_started_at = ?,
+            miner_failed_at = NULL,
+            miner_last_error = '',
+            miner_attempt_count = COALESCE(miner_attempt_count, 0) + 1,
+            updated_at = ?
+        WHERE bvid = ? AND collected_date = ?
+        """,
+        rows,
+    )
 
 
 def mark_scout_raw_videos_mined(
@@ -1247,7 +2308,10 @@ def mark_scout_raw_videos_mined(
         """
         UPDATE scout_raw_videos
         SET miner_status = 'processed',
+            miner_started_at = NULL,
             miner_processed_at = ?,
+            miner_failed_at = NULL,
+            miner_last_error = '',
             updated_at = ?
         WHERE bvid = ? AND collected_date = ?
         """,
@@ -1255,10 +2319,66 @@ def mark_scout_raw_videos_mined(
     )
 
 
+def mark_scout_raw_videos_miner_failed(
+    conn: duckdb.DuckDBPyConnection,
+    videos: list[dict],
+    *,
+    error_message: str,
+) -> None:
+    """将视频标记为 Miner 失败，保留错误信息供后续排查或重试。"""
+    rows = []
+    now = datetime.now()
+    message = str(error_message).strip() or "miner failed"
+    for video in videos:
+        bvid = str(video.get("bvid", "")).strip()
+        collected_date = video.get("collected_date")
+        if not bvid or not collected_date:
+            continue
+        rows.append((now, message, now, bvid, collected_date))
+
+    if not rows:
+        return
+
+    conn.executemany(
+        """
+        UPDATE scout_raw_videos
+        SET miner_status = 'failed',
+            miner_started_at = NULL,
+            miner_failed_at = ?,
+            miner_last_error = ?,
+            updated_at = ?
+        WHERE bvid = ? AND collected_date = ?
+        """,
+        rows,
+    )
+
+
+def recover_stale_miner_processing_videos(conn: duckdb.DuckDBPyConnection) -> int:
+    """将上次异常中断遗留的 processing 视频回收为 failed。"""
+    now = datetime.now()
+    result = conn.execute(
+        """
+        UPDATE scout_raw_videos
+        SET miner_status = 'failed',
+            miner_started_at = NULL,
+            miner_failed_at = ?,
+            miner_last_error = CASE
+                WHEN COALESCE(TRIM(miner_last_error), '') = '' THEN 'previous miner run interrupted'
+                ELSE miner_last_error
+            END,
+            updated_at = ?
+        WHERE miner_status = 'processing'
+        """,
+        [now, now],
+    )
+    rowcount = getattr(result, "rowcount", -1)
+    return max(0, int(rowcount or 0))
+
+
 def get_scout_raw_videos_page(
     conn: duckdb.DuckDBPyConnection,
     *,
-    candidate_status: str | None = None,
+    research_status: str | None = None,
     partition: str | None = None,
     keyword: str | None = None,
     limit: int = 20,
@@ -1268,9 +2388,9 @@ def get_scout_raw_videos_page(
     where_parts: list[str] = []
     params: list[str | int] = []
 
-    if candidate_status:
-        where_parts.append("candidate_status = ?")
-        params.append(candidate_status)
+    if research_status:
+        where_parts.append("research_status = ?")
+        params.append(research_status)
     if partition:
         where_parts.append("partition LIKE ?")
         params.append(f"%{partition}%")
@@ -1296,9 +2416,13 @@ def get_scout_raw_videos_page(
             tags_json,
             comment_count,
             miner_status,
+            miner_started_at,
             miner_processed_at,
-            candidate_status,
-            candidate_extracted_at,
+            miner_failed_at,
+            miner_last_error,
+            miner_attempt_count,
+            research_status,
+            research_started_at,
             created_at,
             updated_at,
             comments_json,
@@ -1307,14 +2431,28 @@ def get_scout_raw_videos_page(
                 FROM scout_raw_comments comments
                 WHERE comments.bvid = scout_raw_videos.bvid
                   AND comments.collected_date = scout_raw_videos.collected_date
-            ), 0) AS picture_count
+            ), 0) AS picture_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM miner_comment_insights insights
+                WHERE insights.bvid = scout_raw_videos.bvid
+                  AND insights.collected_date = scout_raw_videos.collected_date
+                  AND insights.confidence >= ?
+                  AND (insights.is_meme_candidate OR insights.is_insider_knowledge)
+            ), 0) AS high_value_comment_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM comment_insights bundles
+                WHERE bundles.bvid = scout_raw_videos.bvid
+                  AND bundles.collected_date = scout_raw_videos.collected_date
+            ), 0) AS bundle_count
         FROM scout_raw_videos
         {where_clause}
         ORDER BY collected_date DESC, updated_at DESC, bvid ASC
         LIMIT ?
         OFFSET ?
         """,
-        [*params, limit, offset],
+        [settings.miner_comment_confidence_threshold, *params, limit, offset],
     ).fetchall()
 
     return {
@@ -1345,9 +2483,13 @@ def get_scout_raw_video(
             comments_json,
             comment_count,
             miner_status,
+            miner_started_at,
             miner_processed_at,
-            candidate_status,
-            candidate_extracted_at,
+            miner_failed_at,
+            miner_last_error,
+            miner_attempt_count,
+            research_status,
+            research_started_at,
             created_at,
             updated_at,
             COALESCE((
@@ -1355,11 +2497,25 @@ def get_scout_raw_video(
                 FROM scout_raw_comments comments
                 WHERE comments.bvid = scout_raw_videos.bvid
                   AND comments.collected_date = scout_raw_videos.collected_date
-            ), 0) AS picture_count
+            ), 0) AS picture_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM miner_comment_insights insights
+                WHERE insights.bvid = scout_raw_videos.bvid
+                  AND insights.collected_date = scout_raw_videos.collected_date
+                  AND insights.confidence >= ?
+                  AND (insights.is_meme_candidate OR insights.is_insider_knowledge)
+            ), 0) AS high_value_comment_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM comment_insights bundles
+                WHERE bundles.bvid = scout_raw_videos.bvid
+                  AND bundles.collected_date = scout_raw_videos.collected_date
+            ), 0) AS bundle_count
         FROM scout_raw_videos
         WHERE bvid = ? AND collected_date = ?
         """,
-        [bvid, collected_date],
+        [settings.miner_comment_confidence_threshold, bvid, collected_date],
     ).fetchone()
     if not row:
         return None
@@ -1412,9 +2568,13 @@ def update_scout_raw_video_stage(
             """
             UPDATE scout_raw_videos
             SET miner_status = 'pending',
+                miner_started_at = NULL,
                 miner_processed_at = NULL,
-                candidate_status = 'pending',
-                candidate_extracted_at = NULL,
+                miner_failed_at = NULL,
+                miner_last_error = '',
+                miner_attempt_count = 0,
+                research_status = 'pending',
+                research_started_at = NULL,
                 updated_at = ?
             WHERE bvid = ? AND collected_date = ?
             """,
@@ -1423,20 +2583,27 @@ def update_scout_raw_video_stage(
         conn.execute(
             """
             UPDATE miner_comment_insights
-            SET status = 'pending',
+            SET status = CASE
+                    WHEN confidence >= ? AND (is_meme_candidate OR is_insider_knowledge)
+                        THEN 'pending_bundle'
+                    ELSE 'discarded'
+                END,
                 updated_at = ?
             WHERE bvid = ? AND collected_date = ?
             """,
-            [now, bvid, collected_date],
+            [settings.miner_comment_confidence_threshold, now, bvid, collected_date],
         )
     elif stage == "mined":
         conn.execute(
             """
             UPDATE scout_raw_videos
             SET miner_status = 'processed',
+                miner_started_at = NULL,
                 miner_processed_at = COALESCE(miner_processed_at, ?),
-                candidate_status = 'pending',
-                candidate_extracted_at = NULL,
+                miner_failed_at = NULL,
+                miner_last_error = '',
+                research_status = 'pending',
+                research_started_at = NULL,
                 updated_at = ?
             WHERE bvid = ? AND collected_date = ?
             """,
@@ -1445,20 +2612,27 @@ def update_scout_raw_video_stage(
         conn.execute(
             """
             UPDATE miner_comment_insights
-            SET status = 'pending',
+            SET status = CASE
+                    WHEN confidence >= ? AND (is_meme_candidate OR is_insider_knowledge)
+                        THEN 'pending_bundle'
+                    ELSE 'discarded'
+                END,
                 updated_at = ?
             WHERE bvid = ? AND collected_date = ?
             """,
-            [now, bvid, collected_date],
+            [settings.miner_comment_confidence_threshold, now, bvid, collected_date],
         )
     else:
         conn.execute(
             """
             UPDATE scout_raw_videos
             SET miner_status = 'processed',
+                miner_started_at = NULL,
                 miner_processed_at = COALESCE(miner_processed_at, ?),
-                candidate_status = 'processed',
-                candidate_extracted_at = COALESCE(candidate_extracted_at, ?),
+                miner_failed_at = NULL,
+                miner_last_error = '',
+                research_status = 'processed',
+                research_started_at = COALESCE(research_started_at, ?),
                 updated_at = ?
             WHERE bvid = ? AND collected_date = ?
             """,
@@ -1467,11 +2641,20 @@ def update_scout_raw_video_stage(
         conn.execute(
             """
             UPDATE miner_comment_insights
-            SET status = 'processed',
+            SET status = CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM comment_insights ci
+                        WHERE ci.insight_id = miner_comment_insights.insight_id
+                    ) THEN 'bundled'
+                    WHEN confidence >= ? AND (is_meme_candidate OR is_insider_knowledge)
+                        THEN 'pending_bundle'
+                    ELSE 'discarded'
+                END,
                 updated_at = ?
             WHERE bvid = ? AND collected_date = ?
             """,
-            [now, bvid, collected_date],
+            [settings.miner_comment_confidence_threshold, now, bvid, collected_date],
         )
 
     snapshot = get_scout_raw_video(conn, bvid=bvid, collected_date=collected_date)
@@ -1628,11 +2811,11 @@ def get_media_asset(
     }
 
 
-def mark_scout_raw_videos_processed(
+def mark_scout_raw_videos_researched(
     conn: duckdb.DuckDBPyConnection,
     videos: list[dict],
 ) -> None:
-    """将原始视频快照标记为已完成候选词提取。"""
+    """将原始视频快照标记为已进入 Research。"""
     rows = []
     now = datetime.now()
     for video in videos:
@@ -1648,443 +2831,12 @@ def mark_scout_raw_videos_processed(
     conn.executemany(
         """
         UPDATE scout_raw_videos
-        SET candidate_status = 'processed',
-            candidate_extracted_at = ?,
+        SET research_status = 'processed',
+            research_started_at = ?,
             updated_at = ?
         WHERE bvid = ? AND collected_date = ?
         """,
         [(row[0], row[0], row[1], row[2]) for row in rows],
-    )
-
-
-def compute_candidates(
-    conn: duckdb.DuckDBPyConnection,
-    current_date: date,
-    baseline_days: int = 14,
-    score_threshold: float | None = None,
-    new_word_min_docs: int | None = None,
-) -> list[dict]:
-    """
-    计算当日候选词：
-    - 老词：当日词频 / 过去 baseline_days 天均值 >= score_threshold
-    - 新词：baseline 期间从未出现 AND doc_count >= new_word_min_docs
-    返回候选词列表，并写入 candidates 表。
-    """
-    threshold = score_threshold or settings.scout_score_threshold
-    min_docs = new_word_min_docs or settings.scout_new_word_min_docs
-
-    rows = conn.execute(
-        """
-        WITH current AS (
-            SELECT word,
-                   SUM(freq)      AS curr_freq,
-                   SUM(doc_count) AS curr_docs
-            FROM word_freq
-            WHERE date = ?
-            GROUP BY word
-        ),
-        baseline AS (
-            SELECT word,
-                   AVG(daily_freq)   AS baseline_avg
-            FROM (
-                SELECT word, date, SUM(freq) AS daily_freq
-                FROM word_freq
-                WHERE date BETWEEN (? - INTERVAL (?) DAY) AND (? - INTERVAL 1 DAY)
-                GROUP BY word, date
-            )
-            GROUP BY word
-        )
-        SELECT
-            c.word,
-            c.curr_freq,
-            c.curr_docs,
-            COALESCE(b.baseline_avg, 0) AS baseline_avg,
-            CASE
-                WHEN COALESCE(b.baseline_avg, 0) < 0.5 THEN TRUE
-                ELSE FALSE
-            END AS is_new_word,
-            CASE
-                WHEN COALESCE(b.baseline_avg, 0) < 0.5 THEN 999.0
-                ELSE CAST(c.curr_freq AS DOUBLE) / b.baseline_avg
-            END AS score
-        FROM current c
-        LEFT JOIN baseline b ON c.word = b.word
-        WHERE
-            -- 老词条件
-            (COALESCE(b.baseline_avg, 0) >= 0.5 AND
-             CAST(c.curr_freq AS DOUBLE) / b.baseline_avg >= ?)
-            OR
-            -- 新词条件
-            (COALESCE(b.baseline_avg, 0) < 0.5 AND c.curr_docs >= ?)
-        ORDER BY score DESC
-        """,
-        [current_date, current_date, baseline_days, current_date, threshold, min_docs],
-    ).fetchall()
-
-    candidates = []
-    for word, curr_freq, curr_docs, baseline_avg, is_new_word, score in rows:
-        candidates.append(
-            {
-                "word": word,
-                "score": score,
-                "is_new_word": is_new_word,
-                "curr_freq": curr_freq,
-                "curr_docs": curr_docs,
-            }
-        )
-
-    # 写入候选词表（IGNORE 已存在的，保留人工审核状态）
-    if candidates:
-        conn.executemany(
-            """
-            INSERT OR IGNORE INTO candidates (word, score, is_new_word)
-            VALUES (?, ?, ?)
-            """,
-            [(c["word"], c["score"], c["is_new_word"]) for c in candidates],
-        )
-
-    return candidates
-
-
-def get_candidates(
-    conn: duckdb.DuckDBPyConnection,
-    status: str | None = None,
-    limit: int = 50,
-) -> list[dict]:
-    """获取候选梗列表，支持按状态过滤。status=None 返回全部。"""
-    if status:
-        rows = conn.execute(
-            """
-            SELECT
-                word,
-                score,
-                is_new_word,
-                sample_comments,
-                explanation,
-                video_refs_json,
-                detected_at,
-                status
-            FROM candidates
-            WHERE status = ?
-            ORDER BY score DESC
-            LIMIT ?
-            """,
-            [status, limit],
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """
-            SELECT
-                word,
-                score,
-                is_new_word,
-                sample_comments,
-                explanation,
-                video_refs_json,
-                detected_at,
-                status
-            FROM candidates
-            ORDER BY score DESC
-            LIMIT ?
-            """,
-            [limit],
-        ).fetchall()
-    return [
-        {
-            "word": r[0],
-            "score": r[1],
-            "is_new_word": r[2],
-            "sample_comments": r[3],
-            "explanation": r[4],
-            "video_refs": _load_json_text(r[5], default=[]),
-            "detected_at": r[6],
-            "status": r[7],
-        }
-        for r in rows
-    ]
-
-
-def get_candidate(
-    conn: duckdb.DuckDBPyConnection,
-    word: str,
-) -> dict | None:
-    """按词条精确获取单个候选梗。"""
-    row = conn.execute(
-        """
-        SELECT
-            word,
-            score,
-            is_new_word,
-            sample_comments,
-            explanation,
-            video_refs_json,
-            detected_at,
-            status
-        FROM candidates
-        WHERE word = ?
-        """,
-        [word],
-    ).fetchone()
-    if not row:
-        return None
-    return {
-        "word": row[0],
-        "score": row[1],
-        "is_new_word": row[2],
-        "sample_comments": row[3],
-        "explanation": row[4],
-        "video_refs": _load_json_text(row[5], default=[]),
-        "detected_at": row[6],
-        "status": row[7],
-    }
-
-
-def get_candidates_page(
-    conn: duckdb.DuckDBPyConnection,
-    *,
-    status: str | None = None,
-    keyword: str | None = None,
-    limit: int = 20,
-    offset: int = 0,
-) -> dict:
-    """分页获取候选梗完整信息。"""
-    where_parts: list[str] = []
-    params: list[str | int] = []
-    if status:
-        where_parts.append("status = ?")
-        params.append(status)
-    if keyword:
-        where_parts.append("(word LIKE ? OR explanation LIKE ? OR sample_comments LIKE ?)")
-        wildcard_keyword = f"%{keyword}%"
-        params.extend([wildcard_keyword, wildcard_keyword, wildcard_keyword])
-
-    where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
-
-    total = conn.execute(
-        f"SELECT COUNT(*) FROM candidates {where_clause}",
-        params,
-    ).fetchone()[0]
-
-    page_params = [*params, limit, offset]
-    rows = conn.execute(
-        f"""
-        SELECT
-            word,
-            score,
-            is_new_word,
-            sample_comments,
-            explanation,
-            video_refs_json,
-            detected_at,
-            status
-        FROM candidates
-        {where_clause}
-        ORDER BY detected_at DESC, score DESC, word ASC
-        LIMIT ?
-        OFFSET ?
-        """,
-        page_params,
-    ).fetchall()
-
-    items = [
-        {
-            "word": row[0],
-            "score": row[1],
-            "is_new_word": row[2],
-            "sample_comments": row[3],
-            "explanation": row[4],
-            "video_refs": _load_json_text(row[5], default=[]),
-            "detected_at": row[6],
-            "status": row[7],
-        }
-        for row in rows
-    ]
-    return {
-        "items": items,
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
-
-
-def get_candidate_source_insights(
-    conn: duckdb.DuckDBPyConnection,
-    *,
-    word: str,
-    limit: int = 100,
-) -> dict | None:
-    """获取候选词及其来源视频/评论线索。"""
-    candidate = get_candidate(conn, word)
-    if not candidate:
-        return None
-
-    video_refs = candidate.get("video_refs", [])
-    if not isinstance(video_refs, list):
-        video_refs = []
-    normalized_video_refs = [item for item in video_refs if isinstance(item, dict)]
-    bvids = [str(item.get("bvid", "")).strip() for item in normalized_video_refs if str(item.get("bvid", "")).strip()]
-    if not bvids:
-        return {
-            "candidate": candidate,
-            "video_refs": [],
-            "source_insights": [],
-        }
-
-    placeholders = ", ".join("?" for _ in bvids)
-    rows = conn.execute(
-        f"""
-        SELECT
-            insight_id,
-            bvid,
-            collected_date,
-            partition,
-            title,
-            description,
-            video_url,
-            tags_json,
-            comment_text,
-            confidence,
-            is_meme_candidate,
-            is_insider_knowledge,
-            reason,
-            video_context_json,
-            status,
-            created_at,
-            updated_at
-        FROM miner_comment_insights
-        WHERE bvid IN ({placeholders})
-        """,
-        bvids,
-    ).fetchall()
-
-    matched_comments_by_bvid: dict[str, set[str]] = {}
-    for item in normalized_video_refs:
-        bvid = str(item.get("bvid", "")).strip()
-        if not bvid:
-            continue
-        comments = item.get("matched_comments", [])
-        if not isinstance(comments, list):
-            comments = []
-        matched_comments_by_bvid.setdefault(bvid, set()).update(
-            str(comment).strip() for comment in comments if str(comment).strip()
-        )
-
-    enriched: list[tuple[int, dict]] = []
-    for row in rows:
-        item = _serialize_miner_comment_insight(row)
-        comment_text = str(item.get("comment_text", "")).strip()
-        reason = str(item.get("reason", "")).strip()
-        title = str(item.get("title", "")).strip()
-        description = str(item.get("description", "")).strip()
-        bvid = str(item.get("bvid", "")).strip()
-        matched_comments = matched_comments_by_bvid.get(bvid, set())
-
-        relevance = 0
-        if comment_text and comment_text in matched_comments:
-            relevance += 6
-        if word and word in comment_text:
-            relevance += 4
-        if word and (word in title or word in description or word in reason):
-            relevance += 2
-        if item.get("is_meme_candidate"):
-            relevance += 1
-        if item.get("is_insider_knowledge"):
-            relevance += 1
-
-        if relevance <= 0 and matched_comments:
-            continue
-        item["matched_by_candidate_word"] = bool(word and word in comment_text)
-        item["matched_by_video_ref_comments"] = bool(comment_text and comment_text in matched_comments)
-        item["relevance_score"] = relevance
-        enriched.append((relevance, item))
-
-    enriched.sort(
-        key=lambda pair: (
-            pair[0],
-            float(pair[1].get("confidence", 0.0) or 0.0),
-            str(pair[1].get("bvid", "")),
-            str(pair[1].get("insight_id", "")),
-        ),
-        reverse=True,
-    )
-
-    return {
-        "candidate": candidate,
-        "video_refs": normalized_video_refs,
-        "source_insights": [item for _, item in enriched[:limit]],
-    }
-
-
-def get_pending_candidates(
-    conn: duckdb.DuckDBPyConnection, limit: int = 100
-) -> list[dict]:
-    """获取待 AI 分析的候选词。"""
-    rows = conn.execute(
-        """
-        SELECT word, score, is_new_word, sample_comments, explanation, video_refs_json, detected_at
-        FROM candidates
-        WHERE status = 'pending'
-        ORDER BY score DESC
-        LIMIT ?
-        """,
-        [limit],
-    ).fetchall()
-    return [
-        {
-            "word": r[0],
-            "score": r[1],
-            "is_new_word": r[2],
-            "sample_comments": r[3],
-            "explanation": r[4],
-            "video_refs": _load_json_text(r[5], default=[]),
-            "detected_at": r[6],
-        }
-        for r in rows
-    ]
-
-
-def update_candidate_status(
-    conn: duckdb.DuckDBPyConnection,
-    word: str,
-    status: str,  # 'accepted' | 'rejected' | 'pending'
-) -> None:
-    conn.execute(
-        "UPDATE candidates SET status = ? WHERE word = ?",
-        [status, word],
-    )
-
-
-def update_candidate_comments(
-    conn: duckdb.DuckDBPyConnection,
-    word: str,
-    sample_comments: str,
-) -> None:
-    conn.execute(
-        "UPDATE candidates SET sample_comments = ? WHERE word = ?",
-        [sample_comments, word],
-    )
-
-
-def update_candidate_context(
-    conn: duckdb.DuckDBPyConnection,
-    word: str,
-    *,
-    sample_comments: str,
-    explanation: str,
-    video_refs: list[dict],
-) -> None:
-    conn.execute(
-        """
-        UPDATE candidates
-        SET sample_comments = ?, explanation = ?, video_refs_json = ?
-        WHERE word = ?
-        """,
-        [
-            sample_comments,
-            explanation,
-            json.dumps(video_refs, ensure_ascii=False),
-            word,
-        ],
     )
 
 
@@ -2148,13 +2900,6 @@ def upsert_meme_record(
             record.updated_at,
         ],
     )
-
-
-def delete_all_candidates(conn: duckdb.DuckDBPyConnection) -> int:
-    """删除全部候选梗。"""
-    deleted_count = conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0]
-    conn.execute("DELETE FROM candidates")
-    return deleted_count
 
 
 def get_video_context_cache(
@@ -2446,70 +3191,6 @@ def get_agent_conversation(
     }
 
 
-def upsert_scout_candidates(
-    conn: duckdb.DuckDBPyConnection,
-    candidates: list[dict],
-) -> None:
-    """
-    写入或刷新 Scout 产出的候选词上下文，保留既有审核状态。
-
-    兼容两种输入格式：
-    - 旧格式: {"phrase", "explanation", "examples", "confidence"}
-    - 新格式: {"word", "score", "is_new_word", "sample_comments", "video_refs"}
-    """
-    if not candidates:
-        return
-    rows = []
-    for c in candidates:
-        word = str(c.get("word") or c.get("phrase") or "").strip()
-        if not word:
-            continue
-        score = float(c.get("score", c.get("confidence", 0.5)))
-        is_new_word = bool(c.get("is_new_word", True))
-        explanation = str(c.get("explanation", ""))
-        video_refs = c.get("video_refs", [])
-        if not isinstance(video_refs, list):
-            video_refs = []
-
-        sample_comments = str(c.get("sample_comments", "")).strip()
-        if not sample_comments:
-            examples = c.get("examples", [])
-            if isinstance(examples, list):
-                sample_comments = "\n".join(f"- {e}" for e in examples if e)
-
-        rows.append(
-            (
-                word,
-                score,
-                is_new_word,
-                sample_comments,
-                explanation,
-                json.dumps(video_refs, ensure_ascii=False),
-            )
-        )
-
-    conn.executemany(
-        """
-        INSERT INTO candidates (
-            word,
-            score,
-            is_new_word,
-            sample_comments,
-            explanation,
-            video_refs_json
-        )
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT (word) DO UPDATE
-        SET score = excluded.score,
-            is_new_word = excluded.is_new_word,
-            sample_comments = excluded.sample_comments,
-            explanation = excluded.explanation,
-            video_refs_json = excluded.video_refs_json
-        """,
-        rows,
-    )
-
-
 def create_pipeline_run(
     conn: duckdb.DuckDBPyConnection,
     job_name: str,
@@ -2687,15 +3368,21 @@ def _serialize_scout_raw_video(row: tuple) -> dict:
         "comments": [str(comment) for comment in comments if str(comment).strip()],
         "comment_count": row[8],
         "miner_status": row[9],
-        "miner_processed_at": row[10],
-        "candidate_status": row[11],
-        "candidate_extracted_at": row[12],
-        "created_at": row[13],
-        "updated_at": row[14],
-        "picture_count": row[15],
+        "miner_started_at": row[10],
+        "miner_processed_at": row[11],
+        "miner_failed_at": row[12],
+        "miner_last_error": row[13] or "",
+        "miner_attempt_count": int(row[14] or 0),
+        "research_status": row[15],
+        "research_started_at": row[16],
+        "created_at": row[17],
+        "updated_at": row[18],
+        "picture_count": row[19],
+        "high_value_comment_count": row[20],
+        "bundle_count": row[21],
         "pipeline_stage": _build_scout_pipeline_stage(
             miner_status=row[9],
-            candidate_status=row[11],
+            research_status=row[15],
         ),
     }
 
@@ -2705,7 +3392,7 @@ def _serialize_scout_raw_video_summary(row: tuple) -> dict:
     if not isinstance(tags, list):
         tags = []
 
-    comments = _load_json_text(row[13], default=[])
+    comments = _load_json_text(row[17], default=[])
     if not isinstance(comments, list):
         comments = []
 
@@ -2722,23 +3409,33 @@ def _serialize_scout_raw_video_summary(row: tuple) -> dict:
         "tags": [str(tag).strip() for tag in tags if str(tag).strip()],
         "comment_count": row[6],
         "miner_status": row[7],
-        "miner_processed_at": row[8],
-        "candidate_status": row[9],
-        "candidate_extracted_at": row[10],
-        "created_at": row[11],
-        "updated_at": row[12],
+        "miner_started_at": row[8],
+        "miner_processed_at": row[9],
+        "miner_failed_at": row[10],
+        "miner_last_error": row[11] or "",
+        "miner_attempt_count": int(row[12] or 0),
+        "research_status": row[13],
+        "research_started_at": row[14],
+        "created_at": row[15],
+        "updated_at": row[16],
         "first_comment": first_comment,
-        "picture_count": row[14],
+        "picture_count": row[18],
+        "high_value_comment_count": row[19],
+        "bundle_count": row[20],
         "pipeline_stage": _build_scout_pipeline_stage(
             miner_status=row[7],
-            candidate_status=row[9],
+            research_status=row[13],
         ),
     }
 
 
-def _build_scout_pipeline_stage(*, miner_status: str, candidate_status: str) -> str:
-    if candidate_status == "processed":
+def _build_scout_pipeline_stage(*, miner_status: str, research_status: str) -> str:
+    if research_status == "processed":
         return "researched"
+    if miner_status == "failed":
+        return "miner_failed"
+    if miner_status == "processing":
+        return "mining"
     if miner_status == "processed":
         return "mined"
     return "scouted"
@@ -2772,6 +3469,8 @@ def _serialize_miner_comment_insight(row: tuple) -> dict:
         "status": row[14],
         "created_at": row[15],
         "updated_at": row[16],
+        "bundle_id": row[17] or "",
+        "bundle_status": row[18] or "",
     }
 
 

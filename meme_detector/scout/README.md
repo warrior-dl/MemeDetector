@@ -7,7 +7,6 @@
 | 文件 | 职责 |
 |------|------|
 | `collector.py` | 调用 bilibili-api，采集分区 Top 视频的高赞评论（每视频 top 20） |
-| `llm_analyzer.py` | 旧版实验模块，当前 `scout` 流程不再调用 |
 | `models.py` | `ScoutRunResult` 运行结果模型 |
 | `persistence.py` | Scout 原始快照入库封装 |
 | `scorer.py` | Scout 编排层，串联采集 → flatten → 原始快照写库 |
@@ -42,16 +41,16 @@
     ↓
 等待 Miner 消费评论并补充线索
     ↓
-等待 Researcher 提取候选词并深度分析
+等待 Researcher 基于评论证据包完成最终裁决
 ```
 
 当前 `Scout` 不调用 LLM，只负责采集和原始数据入库。
-候选词判断、深度理解、溯源和最终判定都留给后续 `Miner` / `Researcher` 阶段完成。
+评论切分、假设生成、联网取证和最终判定都留给后续 `Miner` / `Researcher` 阶段完成。
 
 ## 去重策略
 
 - 单次 `Scout` 运行内按 `bvid` 合并，避免同一轮采集里重复视频进入原始库
-- 同一天重复运行 `Scout` 时，如果同一 `bvid` 的标题、简介、标签、评论内容都没变化，不会重置 `miner_status` / `candidate_status`
+- 同一天重复运行 `Scout` 时，如果同一 `bvid` 的标题、简介、标签、评论内容都没变化，不会重置 `miner_status` / `research_status`
 - 如果同一天再次采集到同一视频，但评论或元信息有新增变化，会重置为 `pending`，允许 `Miner` / `Researcher` 只对真正增量内容重跑
 - 如果历史上已经存在完全相同的视频快照，会直接跳过，不再重复入库和重复处理
 

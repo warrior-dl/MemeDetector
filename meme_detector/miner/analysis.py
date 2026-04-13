@@ -389,6 +389,10 @@ def materialize_insight_record(
     tags = video.get("tags", [])
     if not isinstance(tags, list):
         tags = []
+    is_high_value = (
+        float(parsed.confidence) >= settings.miner_comment_confidence_threshold
+        and (bool(parsed.is_meme_candidate) or bool(parsed.is_insider_knowledge))
+    )
     return {
         "insight_id": comment_hash,
         "bvid": bvid,
@@ -403,6 +407,7 @@ def materialize_insight_record(
         "is_meme_candidate": bool(parsed.is_meme_candidate),
         "is_insider_knowledge": bool(parsed.is_insider_knowledge),
         "reason": str(parsed.reason).strip(),
+        "status": "pending_bundle" if is_high_value else "discarded",
         "video_context": {
             "status": context.get("status", ""),
             "summary": context.get("summary", ""),

@@ -4,9 +4,9 @@
 
 ## 页面结构
 
-- `Dashboard`: 查看候选总量、梗库数量和整体运行概况
+- `Dashboard`: 查看证据包总量、梗库数量和整体运行概况
 - `Scout 采集`: 查看原始视频快照、评论样本和评论图片资产
-- `候选工作台`: 筛选候选词，查看来源线索、关联视频、Researcher 对话，并执行人工审核
+- `证据包工作台`: 以评论为中心查看 spans、hypotheses、evidences 和 Research 裁决
 - `梗库`: 查看已入库词条
 - `Pipeline`: 查看调度任务和运行记录
 
@@ -17,7 +17,8 @@
 - 当前 feature hooks 目录：
   - `src/features/dashboard/hooks.ts`
   - `src/features/scout/hooks.ts`
-  - `src/features/candidates/hooks.ts`
+  - `src/features/research/hooks.ts`
+  - `src/features/agents/hooks.ts`
   - `src/features/library/hooks.ts`
   - `src/features/pipeline/hooks.ts`
 - 通用展示组件位于 `src/ui/`
@@ -78,5 +79,5 @@ http://127.0.0.1:8000/
 ## 当前约束
 
 - 第一阶段优先复用现有 FastAPI API，不引入额外前端状态框架
-- 候选页已经具备筛选、来源线索查看、Researcher 对话查看和人工审核闭环
+- 证据包页已经具备筛选、证据查看、Researcher 对话查看和裁决结果联动
 - `antd` 仍是当前体积最大的依赖族，但现阶段已满足可维护性和可用性要求，不再继续激进拆分

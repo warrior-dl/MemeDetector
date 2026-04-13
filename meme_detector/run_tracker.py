@@ -14,7 +14,7 @@ from meme_detector.archivist.duckdb_store import (
     get_conn,
 )
 from meme_detector.logging_utils import bind_log_context, get_logger, reset_log_context
-from meme_detector.miner.models import MinerRunResult
+from meme_detector.miner.models import MinerBundlesRunResult, MinerInsightsRunResult, MinerRunResult
 from meme_detector.researcher.models import ResearchRunResult
 from meme_detector.scout.models import ScoutRunResult
 
@@ -111,13 +111,77 @@ def _build_job_summary(job_name: str, result: Any) -> dict[str, Any]:
             "payload": payload,
         }
 
+    if job_name == "miner_insights" and isinstance(result, MinerInsightsRunResult):
+        payload = result.model_dump(mode="json")
+        insight_count = int(result.insight_count)
+        high_value_count = int(result.high_value_count)
+        failed_video_count = int(result.failed_video_count)
+        failure_suffix = f"，失败 {failed_video_count} 个视频" if failed_video_count > 0 else ""
+        return {
+            "result_count": insight_count,
+            "summary": (
+                f"完成 {int(result.video_count)} 个视频的评论初筛，"
+                f"写入 {insight_count} 条评论线索，高价值 {high_value_count} 条{failure_suffix}"
+            ),
+            "payload": payload,
+        }
+
+    if job_name == "miner_insights" and isinstance(result, dict):
+        payload = result
+        insight_count = int(payload.get("insight_count", 0))
+        high_value_count = int(payload.get("high_value_count", 0))
+        failed_video_count = int(payload.get("failed_video_count", 0))
+        failure_suffix = f"，失败 {failed_video_count} 个视频" if failed_video_count > 0 else ""
+        return {
+            "result_count": insight_count,
+            "summary": (
+                f"完成 {int(payload.get('video_count', 0))} 个视频的评论初筛，"
+                f"写入 {insight_count} 条评论线索，高价值 {high_value_count} 条{failure_suffix}"
+            ),
+            "payload": payload,
+        }
+
+    if job_name == "miner_bundles" and isinstance(result, MinerBundlesRunResult):
+        payload = result.model_dump(mode="json")
+        bundled_count = int(result.bundled_count)
+        failed_count = int(result.failed_insight_count)
+        failure_suffix = f"，失败 {failed_count} 条评论" if failed_count > 0 else ""
+        return {
+            "result_count": bundled_count,
+            "summary": (
+                f"消费 {int(result.queued_insight_count)} 条高价值评论，"
+                f"生成 {bundled_count} 个证据包{failure_suffix}"
+            ),
+            "payload": payload,
+        }
+
+    if job_name == "miner_bundles" and isinstance(result, dict):
+        payload = result
+        bundled_count = int(payload.get("bundled_count", 0))
+        failed_count = int(payload.get("failed_insight_count", 0))
+        failure_suffix = f"，失败 {failed_count} 条评论" if failed_count > 0 else ""
+        return {
+            "result_count": bundled_count,
+            "summary": (
+                f"消费 {int(payload.get('queued_insight_count', 0))} 条高价值评论，"
+                f"生成 {bundled_count} 个证据包{failure_suffix}"
+            ),
+            "payload": payload,
+        }
+
     if job_name == "miner" and isinstance(result, MinerRunResult):
         payload = result.model_dump(mode="json")
         insight_count = int(result.insight_count)
         high_value_count = int(result.high_value_count)
+        bundle_count = int(result.bundle_count)
+        failed_video_count = int(result.failed_video_count)
+        failure_suffix = f"，失败 {failed_video_count} 个视频" if failed_video_count > 0 else ""
         return {
             "result_count": insight_count,
-            "summary": f"写入 {insight_count} 条评论线索，高价值 {high_value_count} 条",
+            "summary": (
+                f"写入 {insight_count} 条评论线索，高价值 {high_value_count} 条，"
+                f"证据包 {bundle_count} 个{failure_suffix}"
+            ),
             "payload": payload,
         }
 
@@ -125,9 +189,15 @@ def _build_job_summary(job_name: str, result: Any) -> dict[str, Any]:
         payload = result if isinstance(result, dict) else {}
         insight_count = int(payload.get("insight_count", 0))
         high_value_count = int(payload.get("high_value_count", 0))
+        bundle_count = int(payload.get("bundle_count", 0))
+        failed_video_count = int(payload.get("failed_video_count", 0))
+        failure_suffix = f"，失败 {failed_video_count} 个视频" if failed_video_count > 0 else ""
         return {
             "result_count": insight_count,
-            "summary": f"写入 {insight_count} 条评论线索，高价值 {high_value_count} 条",
+            "summary": (
+                f"写入 {insight_count} 条评论线索，高价值 {high_value_count} 条，"
+                f"证据包 {bundle_count} 个{failure_suffix}"
+            ),
             "payload": payload,
         }
 
@@ -135,11 +205,11 @@ def _build_job_summary(job_name: str, result: Any) -> dict[str, Any]:
         payload = result.model_dump(mode="json")
         accepted_count = int(result.accepted_count)
         rejected_count = int(result.rejected_count)
-        failed_count = len(result.failed_words)
+        failed_count = len(result.failed_bundle_ids)
         return {
             "result_count": accepted_count,
             "summary": (
-                f"入库 {accepted_count} 个梗，拒绝 {rejected_count} 个候选，"
+                f"入库 {accepted_count} 个梗，驳回 {rejected_count} 个证据包，"
                 f"失败 {failed_count} 个"
             ),
             "payload": payload,
@@ -148,11 +218,11 @@ def _build_job_summary(job_name: str, result: Any) -> dict[str, Any]:
     if job_name == "research" and isinstance(result, dict):
         accepted_count = int(result.get("accepted_count", 0))
         rejected_count = int(result.get("rejected_count", 0))
-        failed_count = len(result.get("failed_words", []))
+        failed_count = len(result.get("failed_bundle_ids", []))
         return {
             "result_count": accepted_count,
             "summary": (
-                f"入库 {accepted_count} 个梗，拒绝 {rejected_count} 个候选，"
+                f"入库 {accepted_count} 个梗，驳回 {rejected_count} 个证据包，"
                 f"失败 {failed_count} 个"
             ),
             "payload": result,

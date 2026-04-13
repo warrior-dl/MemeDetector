@@ -14,7 +14,7 @@
 | 页面 | 路径 | 说明 |
 |------|------|------|
 | Dashboard | `/` | 查看统计、最近运行、最近对话、异常审计 |
-| 候选工作台 | `/candidates` | 查看候选词、来源线索、Researcher 对话并执行审核 |
+| 评论证据包工作台 | `/bundles` | 查看评论证据包、切分、假设、证据与裁决 |
 | 梗库 | `/library` | 查看已入库词条并做人工校验 |
 | Pipeline | `/pipeline` | 查看调度计划、运行记录和单次运行详情 |
 
@@ -48,15 +48,12 @@
 | `GET` | `/api/v1/media-assets/{asset_id}` | 图片资产元数据 |
 | `GET` | `/api/v1/media-assets/{asset_id}/content` | 图片资产本地文件内容 |
 
-### 候选词管理（内部）
+### Research 证据包（内部）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/api/v1/candidates` | 候选词列表（简表） |
-| `GET` | `/api/v1/candidates/page` | 候选词分页列表（完整字段） |
-| `GET` | `/api/v1/candidates/{word}/sources` | 单个候选词的来源视频与评论线索 |
-| `DELETE` | `/api/v1/candidates` | 删除全部候选词 |
-| `POST` | `/api/v1/candidates/{word}/verify?action=accept\|reject` | 人工审核 |
+| `GET` | `/api/v1/research/bundles/page` | 评论证据包分页摘要 |
+| `GET` | `/api/v1/research/bundles/{bundle_id}` | 单个评论证据包详情与裁决 |
 | `POST` | `/api/v1/memes/{id}/verify?verified=true` | 标记梗为人工验证 |
 
 ### 运行记录 / 调度 / Agent 对话
@@ -74,7 +71,7 @@
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/api/v1/stats` | 候选词统计 + 梗库总量 |
+| `GET` | `/api/v1/stats` | 证据包统计 + 梗库总量 |
 
 ## 调试
 
@@ -87,7 +84,7 @@ http://localhost:8000/docs
 
 ```text
 http://localhost:8000/
-http://localhost:8000/candidates
+http://localhost:8000/bundles
 http://localhost:8000/library
 http://localhost:8000/pipeline
 ```

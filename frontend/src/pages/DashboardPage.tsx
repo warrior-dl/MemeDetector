@@ -11,18 +11,19 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { useCandidatesPage, useAgentConversations } from "../features/candidates/hooks";
+import { useAgentConversations } from "../features/agents/hooks";
+import { useResearchBundlesPage } from "../features/research/hooks";
 import { useDashboardStats } from "../features/dashboard/hooks";
 import { useMemes } from "../features/library/hooks";
 import { useJobs, useRuns } from "../features/pipeline/hooks";
 import { useScoutRawVideosPage } from "../features/scout/hooks";
 import { PageSection } from "../ui/PageSection";
-import { CandidateStatusTag, ConversationStatusTag, RunStatusTag } from "../ui/StatusTags";
+import { BundleStatusTag, ConversationStatusTag, RunStatusTag } from "../ui/StatusTags";
 import { formatOptionalDateTime } from "../utils/format";
 
 export function DashboardPage() {
   const statsQuery = useDashboardStats();
-  const candidatesQuery = useCandidatesPage({ status: "pending", limit: 6 });
+  const bundlesQuery = useResearchBundlesPage({ status: "bundled", queuedOnly: true, limit: 6 });
   const memesQuery = useMemes({ limit: 6 });
   const runsQuery = useRuns({ limit: 6 });
   const failedRunsQuery = useRuns({ status: "failed", limit: 6 });
@@ -40,23 +41,51 @@ export function DashboardPage() {
   }
 
   const stats = statsQuery.data;
+  const pendingMinerVideos = stats?.blockers.pending_miner_videos ?? 0;
+  const failedMinerVideos = stats?.blockers.failed_miner_videos ?? 0;
+  const bundledCount = stats?.bundles.bundled ?? 0;
+  const readyBundleCount = stats?.bundles.ready ?? 0;
 
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
+      {pendingMinerVideos > 0 || failedMinerVideos > 0 ? (
+        <Alert
+          type={failedMinerVideos > 0 ? "warning" : "info"}
+          showIcon
+          message="Miner 仍有积压或失败视频"
+          description={`当前待 Miner 视频 ${pendingMinerVideos} 个，Miner 失败视频 ${failedMinerVideos} 个。Research 现在会继续消费已排队的证据包，可进入 Research 的证据包为 ${readyBundleCount} 个。`}
+        />
+      ) : null}
+
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} xl={6}>
           <Card>
-            <Statistic title="待处理候选" value={stats?.candidates.pending ?? 0} />
+            <Statistic title="可进入 Research" value={readyBundleCount} />
           </Card>
         </Col>
         <Col xs={24} sm={12} xl={6}>
           <Card>
-            <Statistic title="已接受候选" value={stats?.candidates.accepted ?? 0} />
+            <Statistic title="待研判证据包" value={bundledCount} />
           </Card>
         </Col>
         <Col xs={24} sm={12} xl={6}>
           <Card>
-            <Statistic title="已拒绝候选" value={stats?.candidates.rejected ?? 0} />
+            <Statistic title="待 Miner 视频" value={pendingMinerVideos} />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} xl={6}>
+          <Card>
+            <Statistic title="Miner 失败视频" value={failedMinerVideos} />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} xl={6}>
+          <Card>
+            <Statistic title="已研判证据包" value={stats?.bundles.researched ?? 0} />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} xl={6}>
+          <Card>
+            <Statistic title="证据包总量" value={stats?.bundles.total ?? 0} />
           </Card>
         </Col>
         <Col xs={24} sm={12} xl={6}>
@@ -173,29 +202,36 @@ export function DashboardPage() {
           </PageSection>
         </Col>
         <Col xs={24} xl={12}>
-          <PageSection title="待处理候选" subtitle="最适合收敛成一个候选工作台，不再拆散到多个页面。">
+          <PageSection title="待研判证据包" subtitle="以评论为中心看切分、假设和证据，不再把候选词当主轴。">
             <List
-              dataSource={candidatesQuery.data?.items ?? []}
-              locale={{ emptyText: <Empty description="暂无候选" /> }}
+              dataSource={bundlesQuery.data?.items ?? []}
+              locale={{ emptyText: <Empty description="暂无证据包" /> }}
               renderItem={(item) => (
                 <List.Item>
                   <List.Item.Meta
                     title={
                       <Space wrap>
-                        <Typography.Text strong>{item.word}</Typography.Text>
-                        <CandidateStatusTag status={item.status} />
+                        <Typography.Text strong>{item.comment_text || item.bundle_id}</Typography.Text>
+                        <BundleStatusTag status={item.status} />
                       </Space>
                     }
-                    description={item.explanation || item.sample_comments || "暂无解释"}
+                    description={
+                      <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                        <Typography.Text>{item.reason || "暂无摘要"}</Typography.Text>
+                        <Typography.Text type="secondary">
+                          {item.bvid} · 假设 {item.hypothesis_count ?? 0} · 证据 {item.evidence_count ?? 0}
+                        </Typography.Text>
+                      </Space>
+                    }
                   />
-                  <Typography.Text>{Number(item.score || 0).toFixed(2)}</Typography.Text>
+                  <Typography.Text>{Number(item.signal_score || 0).toFixed(2)}</Typography.Text>
                 </List.Item>
               )}
             />
           </PageSection>
         </Col>
         <Col xs={24} xl={12}>
-          <PageSection title="最新入库梗" subtitle="正式词条与候选分开看，但保持同一套导航。">
+          <PageSection title="最新入库梗" subtitle="Research 最终输出的正式词条仍单独展示。">
             <List
               dataSource={memesQuery.data?.hits ?? []}
               locale={{ emptyText: <Empty description="暂无梗库数据" /> }}
@@ -303,6 +339,12 @@ function resolveScoutStageLabel(stage?: string) {
   if (stage === "researched") {
     return "已进入 Research";
   }
+  if (stage === "miner_failed") {
+    return "Miner 失败";
+  }
+  if (stage === "mining") {
+    return "Miner 处理中";
+  }
   if (stage === "mined") {
     return "已 Miner";
   }
@@ -315,6 +357,12 @@ function resolveScoutStageLabel(stage?: string) {
 function resolveScoutStageColor(stage?: string) {
   if (stage === "researched") {
     return "purple";
+  }
+  if (stage === "miner_failed") {
+    return "error";
+  }
+  if (stage === "mining") {
+    return "processing";
   }
   if (stage === "mined") {
     return "cyan";

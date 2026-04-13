@@ -16,7 +16,7 @@ import {
   Typography,
 } from "antd";
 import { useDeferredValue, useEffect, useState } from "react";
-import { useAgentConversation, useAgentConversations } from "../features/candidates/hooks";
+import { useAgentConversation, useAgentConversations } from "../features/agents/hooks";
 import {
   useMinerCommentInsightDetail,
   useMinerCommentInsightsPage,
@@ -27,7 +27,7 @@ import { ConversationStatusTag, MinerInsightStatusTag } from "../ui/StatusTags";
 import { formatDateTime, shortId } from "../utils/format";
 
 export function MinerPage() {
-  const [status, setStatus] = useState<string>("pending");
+  const [status, setStatus] = useState<string>("pending_bundle");
   const [keywordInput, setKeywordInput] = useState("");
   const [bvidInput, setBvidInput] = useState("");
   const [onlyMemeCandidates, setOnlyMemeCandidates] = useState(false);
@@ -101,8 +101,8 @@ export function MinerPage() {
     <Row gutter={[20, 20]}>
       <Col xs={24} xl={10}>
         <PageSection
-          title="Miner 结果"
-          subtitle="直接查看评论线索、命中标签和候选提取状态，确认今天的 Miner 到底产出了什么。"
+          title="评论线索"
+          subtitle="这是 Miner Stage 1 的结果页：先看评论初筛，再决定哪些评论会进入证据包生成。"
           extra={
             <Space wrap>
               <Tag color="blue">当前 {insightsQuery.data?.total ?? 0} 条</Tag>
@@ -117,8 +117,11 @@ export function MinerPage() {
                 value={status || undefined}
                 style={{ minWidth: 150 }}
                 options={[
-                  { label: "待提取候选", value: "pending" },
-                  { label: "已提取候选", value: "processed" },
+                    { label: "待生成证据包", value: "pending_bundle" },
+                    { label: "生成中", value: "bundling" },
+                    { label: "已生成证据包", value: "bundled" },
+                    { label: "证据包失败", value: "bundle_failed" },
+                    { label: "已淘汰", value: "discarded" },
                 ]}
                 onChange={(value) => {
                   setStatus(value ?? "");
@@ -205,6 +208,9 @@ export function MinerPage() {
                             <Typography.Text type="secondary">
                               {item.collected_date || "--"} · {shortId(item.insight_id)}
                             </Typography.Text>
+                            <Typography.Text type="secondary">
+                              证据包：{item.bundle_id ? shortId(item.bundle_id) : "未生成"}
+                            </Typography.Text>
                             <Typography.Text type="secondary">{item.reason || "暂无说明"}</Typography.Text>
                           </Space>
                         }
@@ -237,7 +243,7 @@ export function MinerPage() {
           subtitle={
             selectedInsight
               ? `${selectedInsight.title || "无标题视频"} · ${selectedInsight.bvid}`
-              : "逐条确认评论、视频上下文和 Miner 对话，判断这条线索是否值得进入下一步。"
+              : "逐条确认评论、视频上下文和入队去向，判断这条线索是否已经顺利进入 Stage 2。"
           }
         >
           {!selectedInsightId ? (
@@ -257,6 +263,16 @@ export function MinerPage() {
                   children: (
                     <Space direction="vertical" size={12} style={{ width: "100%" }}>
                       <DescriptionsBlock insight={selectedInsight} />
+                      <div>
+                        <Typography.Text strong>Stage 2 去向</Typography.Text>
+                        <div style={{ marginTop: 8 }}>
+                          <Space wrap>
+                            <MinerInsightStatusTag status={selectedInsight.status} />
+                            {selectedInsight.bundle_id ? <Tag color="success">bundle {shortId(selectedInsight.bundle_id)}</Tag> : null}
+                            {selectedInsight.bundle_status ? <Tag color="blue">{selectedInsight.bundle_status}</Tag> : null}
+                          </Space>
+                        </div>
+                      </div>
                       <div>
                         <Typography.Text strong>评论正文</Typography.Text>
                         <Typography.Paragraph style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
@@ -322,12 +338,15 @@ export function MinerPage() {
                             description={
                               <Space direction="vertical" size={4} style={{ width: "100%" }}>
                                 <Typography.Text type="secondary">
-                                  {item.collected_date || "--"} · {shortId(item.insight_id)} · 置信度{" "}
-                                  {Number(item.confidence || 0).toFixed(2)}
-                                </Typography.Text>
-                                <Typography.Text type="secondary">{item.reason || "暂无说明"}</Typography.Text>
-                              </Space>
-                            }
+                                    {item.collected_date || "--"} · {shortId(item.insight_id)} · 置信度{" "}
+                                    {Number(item.confidence || 0).toFixed(2)}
+                                  </Typography.Text>
+                                  <Typography.Text type="secondary">
+                                    证据包：{item.bundle_id ? shortId(item.bundle_id) : "未生成"}
+                                  </Typography.Text>
+                                  <Typography.Text type="secondary">{item.reason || "暂无说明"}</Typography.Text>
+                                </Space>
+                              }
                           />
                         </List.Item>
                       )}
@@ -351,7 +370,7 @@ export function MinerPage() {
                 },
                 {
                   key: "conversations",
-                  label: `Miner 对话 (${conversationsQuery.data?.total ?? 0})`,
+                  label: `Stage 1 对话 (${conversationsQuery.data?.total ?? 0})`,
                   children: conversationsQuery.isLoading ? (
                     <Spin />
                   ) : conversationsQuery.error ? (

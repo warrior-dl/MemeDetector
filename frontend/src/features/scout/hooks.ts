@@ -15,8 +15,8 @@ export function useScoutRawVideosPage(params: ScoutRawVideosPageParams = {}) {
         limit: String(params.limit ?? 20),
         offset: String(params.offset ?? 0),
       });
-      if (params.candidateStatus) {
-        searchParams.set("candidate_status", params.candidateStatus);
+      if (params.researchStatus) {
+        searchParams.set("research_status", params.researchStatus);
       }
       if (params.partition) {
         searchParams.set("partition", params.partition);

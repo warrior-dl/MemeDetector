@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import date
 
 from meme_detector.logging_utils import get_logger
+from meme_detector.pipeline_service import update_job_runtime_progress
 from meme_detector.scout.collector import collect_all_partitions
 from meme_detector.scout.models import ScoutRunResult
 from meme_detector.scout.persistence import persist_raw_videos
@@ -85,16 +86,32 @@ async def run_scout(target_date: date | None = None) -> ScoutRunResult:
     1. 采集 B站各分区 Top 视频的高赞评论和视频元信息
     2. 将原始视频/评论快照写入 DuckDB
 
-    候选词提取延后到 Researcher 阶段处理。
+    Scout 不做梗判断，后续由 Miner / Researcher 继续处理。
     """
     today = target_date or date.today()
     logger.info("scout started", extra={"event": "scout_started", "target_date": today.isoformat()})
+    update_job_runtime_progress(
+        "scout",
+        phase="collecting",
+        current=0,
+        total=2,
+        unit="阶段",
+        message="正在采集分区视频与评论",
+    )
 
     all_partition_data = await collect_all_partitions()
     raw_video_count = sum(len(video_list) for video_list in all_partition_data.values())
     flattened_videos, total_comments = _flatten_partition_videos(all_partition_data)
 
     total_videos = len(flattened_videos)
+    update_job_runtime_progress(
+        "scout",
+        phase="persisting",
+        current=1,
+        total=2,
+        unit="阶段",
+        message=f"采集完成，准备入库 {total_videos} 个视频快照",
+    )
     logger.info(
         "scout collection summary",
         extra={
@@ -108,6 +125,14 @@ async def run_scout(target_date: date | None = None) -> ScoutRunResult:
     )
 
     persist_stats = persist_raw_videos(flattened_videos, today)
+    update_job_runtime_progress(
+        "scout",
+        phase="persisting",
+        current=2,
+        total=2,
+        unit="阶段",
+        message=f"已入库 {persist_stats.get('persisted_count', 0)} 个视频快照",
+    )
     logger.info(
         "scout persistence summary",
         extra={

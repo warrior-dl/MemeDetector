@@ -10,8 +10,9 @@ from meme_detector.archivist.duckdb_store import (
     finish_agent_conversation,
     finish_pipeline_run,
     get_conn,
+    upsert_comment_bundle,
     upsert_miner_comment_insights,
-    upsert_scout_candidates,
+    upsert_research_decision,
     upsert_scout_raw_videos,
 )
 
@@ -81,10 +82,16 @@ def client(tmp_path, monkeypatch):
                 "trigger": "cron[hour='2', minute='5']",
             },
             {
-                "id": "daily_miner",
-                "name": "每日评论线索挖掘",
+                "id": "daily_miner_insights",
+                "name": "每日评论线索初筛",
                 "next_run_time": "2026-03-28T03:00:00",
                 "trigger": "cron[hour='3', minute='0']",
+            },
+            {
+                "id": "daily_miner_bundles",
+                "name": "每日证据包生成",
+                "next_run_time": "2026-03-28T03:20:00",
+                "trigger": "cron[hour='3', minute='20']",
             },
         ],
     )
@@ -186,43 +193,235 @@ def test_admin_page_and_runs_api(client):
             }
         ],
     )
-    upsert_scout_candidates(
+    upsert_comment_bundle(
         conn,
-        [
-            {
-                "word": "抽象圣经",
-                "score": 92.0,
-                "is_new_word": True,
-                "sample_comments": "- 这也太抽象了，全是圣经",
-                "explanation": "来自评论区复读的抽象短语",
-                "video_refs": [
-                    {
-                        "bvid": "BV1raw111",
-                        "partition": "动画",
-                        "title": "第一条 Scout 快照",
-                        "description": "原始描述 A",
-                        "url": "https://www.bilibili.com/video/BV1raw111",
-                        "tags": ["整活", "抽象", "二创"],
-                        "matched_comment_count": 1,
-                        "matched_comments": ["这也太抽象了，全是圣经"],
-                    }
-                ],
+        {
+            "bundle_id": "bundle-researched",
+            "insight": {
+                "insight_id": "miner-insight-1",
+                "bvid": "BV1raw111",
+                "collected_date": date(2026, 3, 28),
+                "comment_text": "这也太抽象了，全是圣经",
+                "worth_investigating": True,
+                "signal_score": 0.91,
+                "reason": "评论存在可复用表达与实体混合。",
+                "status": "bundled",
             },
-            {
-                "phrase": "电子榨菜",
-                "explanation": "下饭视频相关表述",
-                "examples": ["今天也要电子榨菜"],
-                "confidence": 0.76,
+            "video_refs": [
+                {
+                    "bvid": "BV1raw111",
+                    "title": "第一条 Scout 快照",
+                    "url": "https://www.bilibili.com/video/BV1raw111",
+                    "partition": "动画",
+                    "collected_date": date(2026, 3, 28),
+                }
+            ],
+            "spans": [
+                {
+                    "span_id": "bundle-span-1",
+                    "insight_id": "miner-insight-1",
+                    "raw_text": "太抽象了",
+                    "normalized_text": "太抽象了",
+                    "span_type": "template_core",
+                    "char_start": 2,
+                    "char_end": 6,
+                    "confidence": 0.88,
+                    "is_primary": True,
+                    "query_priority": "high",
+                    "reason": "评论核心评价语。",
+                },
+                {
+                    "span_id": "bundle-span-2",
+                    "insight_id": "miner-insight-1",
+                    "raw_text": "圣经",
+                    "normalized_text": "圣经",
+                    "span_type": "context_term",
+                    "char_start": 9,
+                    "char_end": 11,
+                    "confidence": 0.63,
+                    "is_primary": False,
+                    "query_priority": "medium",
+                    "reason": "圈层语境词。",
+                },
+            ],
+            "hypotheses": [
+                {
+                    "hypothesis_id": "bundle-hyp-1",
+                    "insight_id": "miner-insight-1",
+                    "candidate_title": "太抽象了",
+                    "hypothesis_type": "template_meme",
+                    "miner_opinion": "模板性评价语更可能是梗核。",
+                    "support_score": 0.8,
+                    "counter_score": 0.1,
+                    "uncertainty_score": 0.2,
+                    "suggested_action": "search_then_review",
+                    "status": "queued",
+                }
+            ],
+            "hypothesis_spans": [
+                {
+                    "hypothesis_id": "bundle-hyp-1",
+                    "span_id": "bundle-span-1",
+                    "role": "primary",
+                },
+                {
+                    "hypothesis_id": "bundle-hyp-1",
+                    "span_id": "bundle-span-2",
+                    "role": "related",
+                },
+            ],
+            "evidences": [
+                {
+                    "evidence_id": "bundle-ev-1",
+                    "hypothesis_id": "bundle-hyp-1",
+                    "span_id": "bundle-span-1",
+                    "query": "太抽象了",
+                    "query_mode": "literal",
+                    "source_kind": "web_search_summary",
+                    "source_title": "测试搜索结果",
+                    "source_url": "https://example.com/meme",
+                    "snippet": "常被用作对内容离谱程度的概括。",
+                    "evidence_direction": "supports_template",
+                    "evidence_strength": 0.76,
+                }
+            ],
+            "miner_summary": {
+                "recommended_hypothesis_id": "bundle-hyp-1",
+                "should_queue_for_research": True,
+                "reason": "模板句的复用性最强。",
             },
-        ],
+        },
+    )
+    upsert_research_decision(
+        conn,
+        {
+            "decision_id": "decision-researched",
+            "bundle_id": "bundle-researched",
+            "target_hypothesis_id": "bundle-hyp-1",
+            "decision": "accept",
+            "final_title": "太抽象了",
+            "target_record_id": "太抽象了",
+            "confidence": 0.85,
+            "reason": "模板化评价语比上下文词更适合作为词条名。",
+            "evidence_summary": {
+                "support_count": 2,
+                "counter_count": 0,
+                "unclear_count": 0,
+            },
+            "assessment": {
+                "is_core_meme_unit": True,
+                "is_reusable_expression": True,
+                "is_entity_reference_only": False,
+                "needs_human_review": False,
+                "competing_hypothesis_exists": False,
+            },
+            "record": {
+                "id": "太抽象了",
+                "title": "太抽象了",
+                "alias": [],
+                "definition": "用于概括内容离谱、混乱或超出预期的评价语。",
+                "origin": "常见于 B 站评论区的抽象内容评价语境。",
+                "category": ["抽象"],
+                "platform": "Bilibili",
+                "heat_index": 72,
+                "lifecycle_stage": "peak",
+                "first_detected_at": date(2026, 3, 28),
+                "source_urls": ["https://example.com/meme"],
+                "confidence_score": 0.85,
+                "human_verified": False,
+                "updated_at": date(2026, 3, 28),
+            },
+        },
+        persist_record=True,
+    )
+    upsert_comment_bundle(
+        conn,
+        {
+            "bundle_id": "bundle-pending",
+            "insight": {
+                "insight_id": "bundle-insight-2",
+                "bvid": "BV1raw222",
+                "collected_date": date(2026, 3, 28),
+                "comment_text": "今天也要电子榨菜",
+                "worth_investigating": True,
+                "signal_score": 0.67,
+                "reason": "句子更像稳定复用表达，待进一步研判。",
+                "status": "bundled",
+            },
+            "video_refs": [
+                {
+                    "bvid": "BV1raw222",
+                    "title": "第二条 Scout 快照",
+                    "url": "https://www.bilibili.com/video/BV1raw222",
+                    "partition": "鬼畜",
+                    "collected_date": date(2026, 3, 28),
+                }
+            ],
+            "spans": [
+                {
+                    "span_id": "bundle2-span-1",
+                    "insight_id": "bundle-insight-2",
+                    "raw_text": "电子榨菜",
+                    "normalized_text": "电子榨菜",
+                    "span_type": "quote_core",
+                    "char_start": 5,
+                    "char_end": 9,
+                    "confidence": 0.78,
+                    "is_primary": True,
+                    "query_priority": "high",
+                    "reason": "可能是稳定复用短语。",
+                }
+            ],
+            "hypotheses": [
+                {
+                    "hypothesis_id": "bundle2-hyp-1",
+                    "insight_id": "bundle-insight-2",
+                    "candidate_title": "电子榨菜",
+                    "hypothesis_type": "quote_meme",
+                    "miner_opinion": "短语本身可能具有独立传播性。",
+                    "support_score": 0.65,
+                    "counter_score": 0.15,
+                    "uncertainty_score": 0.35,
+                    "suggested_action": "search_then_review",
+                    "status": "queued",
+                }
+            ],
+            "hypothesis_spans": [
+                {
+                    "hypothesis_id": "bundle2-hyp-1",
+                    "span_id": "bundle2-span-1",
+                    "role": "primary",
+                }
+            ],
+            "evidences": [
+                {
+                    "evidence_id": "bundle2-ev-1",
+                    "hypothesis_id": "bundle2-hyp-1",
+                    "span_id": "bundle2-span-1",
+                    "query": "电子榨菜",
+                    "query_mode": "literal",
+                    "source_kind": "web_search_result",
+                    "source_title": "测试线索",
+                    "source_url": "https://example.com/snack",
+                    "snippet": "常指下饭视频或陪伴式内容。",
+                    "evidence_direction": "supports_meme",
+                    "evidence_strength": 0.61,
+                }
+            ],
+            "miner_summary": {
+                "recommended_hypothesis_id": "bundle2-hyp-1",
+                "should_queue_for_research": True,
+                "reason": "证据已有雏形，但还需要最终判定。",
+            },
+        },
     )
     finish_pipeline_run(
         conn,
         run_id,
         status="success",
         result_count=2,
-        summary="发现 2 个候选梗",
-        payload={"candidate_count": 2},
+        summary="采集 2 个视频快照",
+        payload={"video_count": 2},
     )
     finish_pipeline_run(
         conn,
@@ -273,19 +472,20 @@ def test_admin_page_and_runs_api(client):
     assert root_page.status_code == 200
     assert "MemeDetector Workbench" in root_page.text
 
-    legacy_workbench = client.get("/workbench", follow_redirects=False)
-    assert legacy_workbench.status_code == 307
-    assert legacy_workbench.headers["location"] == "/"
+    removed_workbench = client.get("/workbench")
+    assert removed_workbench.status_code == 404
 
-    legacy_workbench_candidates = client.get("/workbench/candidates", follow_redirects=False)
-    assert legacy_workbench_candidates.status_code == 307
-    assert legacy_workbench_candidates.headers["location"] == "/candidates"
+    removed_workbench_candidates = client.get("/workbench/candidates")
+    assert removed_workbench_candidates.status_code == 404
 
     removed_admin = client.get("/admin")
     assert removed_admin.status_code == 404
 
     removed_admin_candidates = client.get("/admin/candidates")
     assert removed_admin_candidates.status_code == 404
+
+    removed_candidates = client.get("/candidates")
+    assert removed_candidates.status_code == 404
 
     runs_resp = client.get("/api/v1/runs")
     assert runs_resp.status_code == 200
@@ -295,14 +495,19 @@ def test_admin_page_and_runs_api(client):
     assert any(item["job_name"] == "miner" for item in body)
     assert any(item["job_name"] == "research" for item in body)
     scout_run = next(item for item in body if item["job_name"] == "scout")
-    assert scout_run["summary"] == "发现 2 个候选梗"
+    assert scout_run["summary"] == "采集 2 个视频快照"
 
     jobs_resp = client.get("/api/v1/jobs")
     assert jobs_resp.status_code == 200
     jobs_payload = jobs_resp.json()
     assert jobs_payload[0]["id"] == "daily_scout"
-    assert any(item["id"] == "daily_miner" for item in jobs_payload)
+    assert any(item["id"] == "daily_miner_insights" for item in jobs_payload)
+    assert any(item["id"] == "daily_miner_bundles" for item in jobs_payload)
     assert all("is_running" in item for item in jobs_payload)
+    assert all("active_phase" in item for item in jobs_payload)
+    assert all("active_progress_current" in item for item in jobs_payload)
+    assert all("active_progress_total" in item for item in jobs_payload)
+    assert all("active_progress_message" in item for item in jobs_payload)
 
     scout_raw_resp = client.get("/api/v1/scout/raw-videos?limit=10&offset=0")
     assert scout_raw_resp.status_code == 200
@@ -333,12 +538,12 @@ def test_admin_page_and_runs_api(client):
     stage_promote_payload = stage_promote_resp.json()
     assert stage_promote_payload["pipeline_stage"] == "researched"
     assert stage_promote_payload["miner_status"] == "processed"
-    assert stage_promote_payload["candidate_status"] == "processed"
+    assert stage_promote_payload["research_status"] == "processed"
     assert stage_promote_payload["affected_insight_count"] == 1
 
     promoted_miner_detail = client.get("/api/v1/miner/comment-insights/miner-insight-1")
     assert promoted_miner_detail.status_code == 200
-    assert promoted_miner_detail.json()["status"] == "processed"
+    assert promoted_miner_detail.json()["status"] == "bundled"
 
     stage_reset_resp = client.post(
         "/api/v1/scout/raw-videos/BV1raw111/stage",
@@ -348,12 +553,12 @@ def test_admin_page_and_runs_api(client):
     stage_reset_payload = stage_reset_resp.json()
     assert stage_reset_payload["pipeline_stage"] == "scouted"
     assert stage_reset_payload["miner_status"] == "pending"
-    assert stage_reset_payload["candidate_status"] == "pending"
+    assert stage_reset_payload["research_status"] == "pending"
     assert stage_reset_payload["affected_insight_count"] == 1
 
     reset_miner_detail = client.get("/api/v1/miner/comment-insights/miner-insight-1")
     assert reset_miner_detail.status_code == 200
-    assert reset_miner_detail.json()["status"] == "pending"
+    assert reset_miner_detail.json()["status"] == "pending_bundle"
 
     media_asset_resp = client.get("/api/v1/media-assets/test-asset")
     assert media_asset_resp.status_code == 200
@@ -377,37 +582,43 @@ def test_admin_page_and_runs_api(client):
     assert miner_detail["bvid"] == "BV1raw111"
     assert miner_detail["video_context"]["summary"] == "视频在讲抽象整活。"
 
-    candidates_resp = client.get("/api/v1/candidates/page?limit=1&offset=0")
-    assert candidates_resp.status_code == 200
-    payload = candidates_resp.json()
-    assert payload["total"] == 2
-    assert len(payload["items"]) == 1
-    assert payload["items"][0]["explanation"] != ""
+    bundles_resp = client.get("/api/v1/research/bundles/page?limit=10&offset=0")
+    assert bundles_resp.status_code == 200
+    bundles_payload = bundles_resp.json()
+    assert bundles_payload["total"] == 2
+    assert {item["bundle_id"] for item in bundles_payload["items"]} == {
+        "bundle-pending",
+        "bundle-researched",
+    }
 
-    filtered_candidates_resp = client.get(
-        "/api/v1/candidates/page?limit=10&offset=0&status=pending&keyword=%E6%8A%BD%E8%B1%A1"
-    )
-    assert filtered_candidates_resp.status_code == 200
-    filtered_payload = filtered_candidates_resp.json()
-    assert filtered_payload["total"] == 1
-    assert filtered_payload["items"][0]["word"] == "抽象圣经"
+    bundled_only_resp = client.get("/api/v1/research/bundles/page?status=bundled&limit=10&offset=0")
+    assert bundled_only_resp.status_code == 200
+    bundled_only_payload = bundled_only_resp.json()
+    assert bundled_only_payload["total"] == 1
+    assert bundled_only_payload["items"][0]["bundle_id"] == "bundle-pending"
 
-    candidate_sources_resp = client.get(
-        "/api/v1/candidates/%E6%8A%BD%E8%B1%A1%E5%9C%A3%E7%BB%8F/sources"
-    )
-    assert candidate_sources_resp.status_code == 200
-    candidate_sources = candidate_sources_resp.json()
-    assert candidate_sources["candidate"]["word"] == "抽象圣经"
-    assert candidate_sources["video_refs"][0]["bvid"] == "BV1raw111"
-    assert candidate_sources["source_insights"][0]["insight_id"] == "miner-insight-1"
+    queued_only_resp = client.get("/api/v1/research/bundles/page?status=bundled&queued_only=true&limit=10&offset=0")
+    assert queued_only_resp.status_code == 200
+    queued_only_payload = queued_only_resp.json()
+    assert queued_only_payload["total"] == 1
+    assert queued_only_payload["items"][0]["bundle_id"] == "bundle-pending"
 
-    delete_resp = client.delete("/api/v1/candidates")
-    assert delete_resp.status_code == 200
-    assert delete_resp.json()["deleted_count"] == 2
+    bundle_detail_resp = client.get("/api/v1/research/bundles/bundle-researched")
+    assert bundle_detail_resp.status_code == 200
+    bundle_detail = bundle_detail_resp.json()
+    assert bundle_detail["bundle"]["bundle_id"] == "bundle-researched"
+    assert bundle_detail["bundle"]["insight"]["status"] == "researched"
+    assert bundle_detail["bundle"]["hypotheses"][0]["candidate_title"] == "太抽象了"
+    assert bundle_detail["bundle"]["evidences"][0]["query"] == "太抽象了"
+    assert bundle_detail["decisions"][0]["decision"] == "accept"
+    assert bundle_detail["decisions"][0]["final_title"] == "太抽象了"
 
-    candidates_after = client.get("/api/v1/candidates/page?limit=10&offset=0")
-    assert candidates_after.status_code == 200
-    assert candidates_after.json()["total"] == 0
+    stats_resp = client.get("/api/v1/stats")
+    assert stats_resp.status_code == 200
+    stats_payload = stats_resp.json()
+    assert stats_payload["bundles"] == {"total": 2, "bundled": 1, "researched": 1, "ready": 1}
+    assert stats_payload["blockers"] == {"pending_miner_videos": 2, "failed_miner_videos": 0}
+    assert stats_payload["memes_in_library"] == 2
 
     conversations_resp = client.get("/api/v1/agent-conversations?limit=10&offset=0")
     assert conversations_resp.status_code == 200

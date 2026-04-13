@@ -6,14 +6,14 @@
 
 ```
 meme_detector/
-├── __main__.py       # CLI 入口：serve / scout / miner / research
+├── __main__.py       # CLI 入口：serve / scout / miner_insights / miner_bundles / miner / research
 ├── config.py         # 全局配置（从 .env 读取）
 ├── scheduler.py      # APScheduler 定时任务（每日采集 / 每周分析）
 ├── run_tracker.py    # Pipeline 运行记录上下文与落盘封装
 │
 ├── scout/            # 采集与原始入库模块
-├── miner/            # 视频内容解析 + 评论线索初筛
-├── researcher/       # 候选提取 + AI 分析模块
+├── miner/            # 评论线索初筛 + 证据包生成
+├── researcher/       # 评论证据包裁决模块
 ├── archivist/        # 存储层
 └── api/              # REST API
 ```
@@ -27,7 +27,13 @@ python -m meme_detector serve
 # 手动触发一次采集（调试 / 冷启动积累数据）
 python -m meme_detector scout
 
-# 手动触发一次 Miner 评论线索挖掘（调试 / 补跑）
+# 手动触发 Miner Stage 1：评论线索初筛
+python -m meme_detector miner_insights
+
+# 手动触发 Miner Stage 2：证据包生成
+python -m meme_detector miner_bundles
+
+# 串行执行两个 Miner 阶段
 python -m meme_detector miner
 
 # 手动触发一次 AI 分析（调试 / 补跑）
@@ -40,26 +46,25 @@ python -m meme_detector research
 [scout] 每日采集 B站视频元信息/评论/评论图片
     └─▶ DuckDB 写入 scout_raw_videos / scout_raw_comments / media_assets
 
-[miner] 先处理未消费的 scout_raw_videos
+[miner stage 1] 先处理未消费的 scout_raw_videos
     ├─▶ 显式调用 BibiGPT 获取视频背景
     │   └─▶ DuckDB video_context_cache 缓存视频总结 / 字幕摘要
     └─▶ 把 标题 + 简介 + 标签 + 视频内容 + 评论 交给 LLM
         └─▶ 产出 miner_comment_insights 评论线索表
 
-[researcher] 优先消费未处理的 miner_comment_insights
-    └─▶ Step0: 从高价值评论线索提取候选词 → 写入 candidates 表
-        └─▶ 读取 candidates（status=pending）
-    └─▶ Step1: OpenAI-compatible LLM 批量快筛
-        └─▶ Step2: 主流程预取视频背景 + Agent 深度分析（仅高置信度）
-            ├─▶ volcengine_web_search_summary 先拿火山引擎总结版外部搜索上下文
-            ├─▶ volcengine_web_search 仅在总结不足时补火山引擎普通网页结果
-            ├─▶ Agent 对话上下文写入 DuckDB agent_conversations
-            └─▶ Step3: URL 真实性验证
-                └─▶ Meilisearch 写入 MemeRecord
+[miner stage 2] 消费高价值 miner_comment_insights
+    └─▶ 生成 comment_insights / spans / hypotheses / evidences
+
+[researcher] 优先消费 queued comment bundles
+    └─▶ 基于 spans / hypotheses / evidences 做最终裁决
+        ├─▶ 输出 ResearchDecision
+        ├─▶ 仅在 accept / rewrite_title 时生成 MemeRecord
+        ├─▶ URL 真实性验证
+        └─▶ Meilisearch + DuckDB 写入正式词条
 
 [serve / 手动命令]
     └─▶ run_tracker 记录 pipeline_runs
-        └─▶ 工作台 / /candidates /library /pipeline 可视化查看
+        └─▶ 工作台 / /bundles /library /pipeline 可视化查看
 ```
 
 ## 配置
@@ -74,14 +79,15 @@ LLM 配置采用两级覆盖：
 
 ## 运行审计与管理
 
-- `pipeline_runs`：记录 Scout / Miner / Researcher 每次运行状态、摘要和结果数量
-- `agent_conversations`：记录 Researcher 对单个候选词的完整 Agent 对话
+- `pipeline_runs`：记录 Scout / Miner Stage 1 / Miner Stage 2 / Researcher 每次运行状态、摘要和结果数量
+- `agent_conversations`：记录 Agent 对话与运行摘要
 - `video_context_cache`：缓存视频背景分析结果，避免重复请求外部 API
-- `miner_comment_insights`：保存 Miner 对评论的初步判定结果，供 Researcher 消费
+- `miner_comment_insights`：保存 Miner Stage 1 的评论线索与 Stage 2 去向状态
+- `comment_insights` / `comment_spans` / `hypotheses` / `evidences` / `research_decisions`：评论证据包与裁决结果
 - `scout_raw_videos`：保存 Scout 采集到的原始视频/评论快照，供 Miner 挖掘
 - `scout_raw_comments` / `media_assets` / `comment_media_links`：保存结构化评论、评论图片资产及评论到图片的关联关系
 - 管理台入口：
   - `/`
-  - `/candidates`
+  - `/bundles`
   - `/library`
   - `/pipeline`

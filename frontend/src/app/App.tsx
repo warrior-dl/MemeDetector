@@ -9,8 +9,8 @@ const DashboardPage = lazy(() =>
 const ScoutPage = lazy(() =>
   import("../pages/ScoutPage").then((module) => ({ default: module.ScoutPage })),
 );
-const CandidatesPage = lazy(() =>
-  import("../pages/CandidatesPage").then((module) => ({ default: module.CandidatesPage })),
+const BundlesPage = lazy(() =>
+  import("../pages/BundlesPage").then((module) => ({ default: module.BundlesPage })),
 );
 const MinerPage = lazy(() =>
   import("../pages/MinerPage").then((module) => ({ default: module.MinerPage })),
@@ -30,7 +30,7 @@ export default function App() {
         <Route path="/dashboard" element={<PageLoader><DashboardPage /></PageLoader>} />
         <Route path="/scout" element={<PageLoader><ScoutPage /></PageLoader>} />
         <Route path="/miner" element={<PageLoader><MinerPage /></PageLoader>} />
-        <Route path="/candidates" element={<PageLoader><CandidatesPage /></PageLoader>} />
+        <Route path="/bundles" element={<PageLoader><BundlesPage /></PageLoader>} />
         <Route path="/library" element={<PageLoader><LibraryPage /></PageLoader>} />
         <Route path="/pipeline" element={<PageLoader><PipelinePage /></PageLoader>} />
       </Route>

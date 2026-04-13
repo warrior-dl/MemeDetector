@@ -15,8 +15,8 @@ const { Header, Sider, Content } = Layout;
 const navigationItems = [
   { key: "/dashboard", icon: <RadarChartOutlined />, label: "Dashboard" },
   { key: "/scout", icon: <VideoCameraOutlined />, label: "Scout 采集" },
-  { key: "/miner", icon: <MessageOutlined />, label: "Miner 结果" },
-  { key: "/candidates", icon: <DotChartOutlined />, label: "候选工作台" },
+  { key: "/miner", icon: <MessageOutlined />, label: "评论线索" },
+  { key: "/bundles", icon: <DotChartOutlined />, label: "证据包生成" },
   { key: "/library", icon: <DatabaseOutlined />, label: "梗库" },
   { key: "/pipeline", icon: <ApartmentOutlined />, label: "Pipeline" },
 ];
@@ -54,7 +54,7 @@ export function AppShell() {
             管理工作台
           </Typography.Title>
           <Typography.Paragraph style={{ marginTop: 8, color: "#94a3b8" }}>
-            把采集、候选、梗库和调度放进同一条工作流里。
+            把采集、评论证据包、梗库和调度放进同一条工作流里。
           </Typography.Paragraph>
         </div>
 
@@ -94,13 +94,13 @@ export function AppShell() {
                 {resolvePageTitle(location.pathname)}
               </Typography.Title>
               <Typography.Text style={{ color: "#4b5563" }}>
-                统一查看 pipeline 状态、候选线索和已入库梗。
+                统一查看 pipeline 状态、评论证据包和已入库梗。
               </Typography.Text>
             </div>
 
             <Space size={12} wrap>
               <Badge
-                count={`待处理候选 ${data?.candidates?.pending ?? "--"}`}
+                count={`可进入 Research ${data?.bundles?.ready ?? "--"}`}
                 style={{ backgroundColor: "#0f766e" }}
               />
               <Badge
@@ -123,14 +123,14 @@ export function AppShell() {
 }
 
 function resolvePageTitle(pathname: string) {
-  if (pathname.startsWith("/candidates")) {
-    return "候选工作台";
+  if (pathname.startsWith("/bundles")) {
+    return "证据包生成工作台";
   }
   if (pathname.startsWith("/scout")) {
     return "Scout 采集";
   }
   if (pathname.startsWith("/miner")) {
-    return "Miner 结果";
+    return "评论线索工作台";
   }
   if (pathname.startsWith("/library")) {
     return "梗库";

@@ -17,6 +17,7 @@ export function useRuns(params: RunListParams = {}) {
       }
       return fetchJson<RunItem[]>(`/api/v1/runs?${searchParams.toString()}`);
     },
+    refetchInterval: 5000,
   });
 }
 
@@ -32,6 +33,10 @@ export function useJobs() {
   return useQuery({
     queryKey: ["jobs"],
     queryFn: () => fetchJson<JobItem[]>("/api/v1/jobs"),
+    refetchInterval: (query) => {
+      const items = (query.state.data as JobItem[] | undefined) ?? [];
+      return items.some((item) => item.is_running) ? 2000 : 5000;
+    },
   });
 }
 

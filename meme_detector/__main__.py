@@ -3,7 +3,9 @@ meme_detector 包主入口。
 用法：
   python -m meme_detector serve   # 启动 API + 调度器
   python -m meme_detector scout   # 手动触发单次采集
-  python -m meme_detector miner    # 手动触发评论挖掘
+  python -m meme_detector miner_insights  # 手动触发评论初筛
+  python -m meme_detector miner_bundles   # 手动触发证据包生成
+  python -m meme_detector miner           # 串行执行两个 Miner 阶段
   python -m meme_detector research # 手动触发 AI 分析
   python -m meme_detector reset    # 清空测试数据
 """
@@ -24,6 +26,10 @@ def main() -> None:
         _serve()
     elif cmd == "scout":
         asyncio.run(_scout())
+    elif cmd == "miner_insights":
+        asyncio.run(_miner_insights())
+    elif cmd == "miner_bundles":
+        asyncio.run(_miner_bundles())
     elif cmd == "miner":
         asyncio.run(_miner())
     elif cmd == "research":
@@ -36,7 +42,7 @@ def main() -> None:
             extra={"event": "unknown_command", "command": cmd},
         )
         logger.error(
-            "usage: python -m meme_detector [serve|scout|miner|research|reset]",
+            "usage: python -m meme_detector [serve|scout|miner_insights|miner_bundles|miner|research|reset]",
             extra={"event": "unknown_command_usage", "command": cmd},
         )
         sys.exit(1)
@@ -60,10 +66,23 @@ async def _scout() -> None:
     await run_job("scout", trigger_mode="manual")
 
 
-async def _miner() -> None:
+async def _miner_insights() -> None:
     from meme_detector.pipeline_service import run_job
 
-    await run_job("miner", trigger_mode="manual")
+    await run_job("miner_insights", trigger_mode="manual")
+
+
+async def _miner_bundles() -> None:
+    from meme_detector.pipeline_service import run_job
+
+    await run_job("miner_bundles", trigger_mode="manual")
+
+
+async def _miner() -> None:
+    from meme_detector.miner.scorer import run_miner
+    from meme_detector.run_tracker import execute_tracked_job
+
+    await execute_tracked_job("miner", run_miner, trigger_mode="manual")
 
 
 async def _research() -> None:

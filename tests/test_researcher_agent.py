@@ -1,293 +1,20 @@
 from datetime import date
 
 import pytest
-from openai import AsyncOpenAI
-from pydantic_ai.providers.deepseek import DeepSeekProvider
-from pydantic_ai.providers.moonshotai import MoonshotAIProvider
-from pydantic_ai.providers.openai import OpenAIProvider
 
 from meme_detector.archivist.duckdb_store import (
+    get_comment_bundle,
     get_conn,
     get_pending_scout_raw_videos,
-    upsert_scout_candidates,
-    upsert_miner_comment_insights,
+    upsert_comment_bundle,
     upsert_scout_raw_videos,
 )
-from meme_detector.researcher.agent import (
-    _partition_screen_results,
-    _build_research_provider,
-    _deep_analyze,
-    deep_agent,
-    run_research,
-)
-from meme_detector.researcher.models import MemeRecord, QuickScreenResult
-
-
-class _FakeAgentResult:
-    def __init__(self, output: MemeRecord):
-        self.output = output
-
-    def all_messages_json(self) -> bytes:
-        return b"[]"
-
-    def all_messages(self) -> list:
-        return []
-
-
-def test_deep_agent_does_not_expose_bilibili_tools():
-    assert "bilibili_video_context" not in deep_agent._function_toolset.tools
-    assert "bilibili_search" not in deep_agent._function_toolset.tools
-
-
-def test_deep_agent_exposes_byte_search_tools():
-    assert "volcengine_web_search_summary" in deep_agent._function_toolset.tools
-    assert "volcengine_web_search" in deep_agent._function_toolset.tools
-
-
-def test_build_research_provider_uses_moonshot_for_kimi_models():
-    provider = _build_research_provider(
-        client=AsyncOpenAI(api_key="test", base_url="https://api.moonshot.ai/v1"),
-        model_name="kimi-k2.5",
-        base_url="https://api.moonshot.ai/v1",
-    )
-    assert isinstance(provider, MoonshotAIProvider)
-
-
-def test_build_research_provider_uses_deepseek_for_deepseek_models():
-    provider = _build_research_provider(
-        client=AsyncOpenAI(api_key="test", base_url="https://api.deepseek.com"),
-        model_name="deepseek-chat",
-        base_url="https://api.deepseek.com",
-    )
-    assert isinstance(provider, DeepSeekProvider)
-
-
-def test_build_research_provider_falls_back_to_openai_provider():
-    provider = _build_research_provider(
-        client=AsyncOpenAI(api_key="test", base_url="https://example.com/v1"),
-        model_name="custom-chat",
-        base_url="https://example.com/v1",
-    )
-    assert isinstance(provider, OpenAIProvider)
-
-
-def test_partition_screen_results_keeps_unreturned_candidates_pending():
-    candidates = [
-        {"word": "依托答辩", "score": 91.0},
-        {"word": "电子榨菜", "score": 78.0},
-        {"word": "普通词", "score": 12.0},
-    ]
-    screen_results = [
-        QuickScreenResult(
-            word="依托答辩",
-            is_meme=True,
-            confidence=0.95,
-            candidate_category="抽象",
-            reason="符合圈层梗表达",
-        ),
-        QuickScreenResult(
-            word="普通词",
-            is_meme=False,
-            confidence=0.88,
-            candidate_category="其他",
-            reason="只是普通口语",
-        ),
-    ]
-
-    to_deep, rejected, pending_retry = _partition_screen_results(candidates, screen_results)
-
-    assert [item["word"] for item in to_deep] == ["依托答辩"]
-    assert rejected == ["普通词"]
-    assert pending_retry == ["电子榨菜"]
+from meme_detector.pipeline_models import MinerBundle, ResearchDecision
+from meme_detector.researcher.agent import run_research
 
 
 @pytest.mark.asyncio
-async def test_deep_analyze_injects_prefetched_video_context(monkeypatch):
-    prompts: list[str] = []
-
-    async def fake_get_bilibili_video_context(bvid: str) -> dict:
-        return {
-            "bvid": bvid,
-            "video_url": f"https://www.bilibili.com/video/{bvid}",
-            "title": "测试视频",
-            "status": "ready",
-            "summary": "这是预取的 Bibi 摘要",
-            "transcript_excerpt": "第一句字幕 第二句字幕",
-            "chapters": [{"timestamp": "00:00", "title": "开场"}],
-        }
-
-    async def fake_run(prompt: str):
-        prompts.append(prompt)
-        return _FakeAgentResult(
-            MemeRecord(
-                id="依托答辩",
-                title="依托答辩",
-                alias=[],
-                definition="测试定义",
-                origin="测试来源",
-                category=["其他"],
-                heat_index=60,
-                lifecycle_stage="emerging",
-                first_detected_at=date(2026, 3, 31),
-                source_urls=[],
-                confidence_score=0.9,
-                updated_at=date(2026, 3, 31),
-            )
-        )
-
-    monkeypatch.setattr(
-        "meme_detector.researcher.agent.get_bilibili_video_context",
-        fake_get_bilibili_video_context,
-    )
-    async def fake_web_search_summary(_query: str, num_results: int = 5) -> dict:
-        assert num_results == 5
-        return {
-            "summary": (
-                "依托答辩通常被用作抽象谐音梗，常见于B站评论区和鬼畜语境，"
-                "既指代戏谑表达，也会被当作二创场景中的标签化用语。"
-            ),
-            "results": [
-                {
-                    "title": "依托答辩词条",
-                    "link": "https://example.com/wiki",
-                    "snippet": "依托答辩是抽象谐音梗。",
-                    "content": (
-                        "依托答辩相关讨论通常会追溯到B站抽象文化语境，"
-                        "既带有戏谑意味，也会被用于二创标签、评论区互文和鬼畜传播。"
-                        "这一表达在传播中逐渐脱离原始上下文，形成更稳定的圈层识别符号。"
-                    ),
-                }
-            ],
-        }
-
-    async def fake_web_search(_query: str, num_results: int = 5) -> list[dict]:
-        assert num_results == 5
-        return [{"title": "不应触发", "link": "https://example.com/unused", "snippet": "unused"}]
-
-    monkeypatch.setattr(
-        "meme_detector.researcher.agent.volcengine_web_search_summary",
-        fake_web_search_summary,
-    )
-    monkeypatch.setattr(
-        "meme_detector.researcher.agent.volcengine_web_search",
-        fake_web_search,
-    )
-    monkeypatch.setattr("meme_detector.researcher.agent.get_current_run_id", lambda: None)
-    monkeypatch.setattr(deep_agent, "run", fake_run)
-
-    record = await _deep_analyze(
-        word="依托答辩",
-        sample_comments="- 这也太依托答辩了",
-        video_refs=[
-            {
-                "bvid": "BV1TEST123",
-                "title": "测试视频",
-                "partition": "鬼畜",
-                "url": "https://www.bilibili.com/video/BV1TEST123",
-                "matched_comment_count": 2,
-                "matched_comments": ["这也太依托答辩了"],
-            }
-        ],
-        score=999.0,
-        today=date(2026, 3, 31),
-    )
-
-    assert record is not None
-    assert prompts
-    assert "BV1TEST123" in prompts[0]
-    assert "这是预取的 Bibi 摘要" in prompts[0]
-    assert "Scout 关联视频背景" in prompts[0]
-    assert "外部搜索上下文" in prompts[0]
-    assert "总结版搜索是否足够: 是" in prompts[0]
-    assert "普通网页搜索补充" not in prompts[0]
-
-
-@pytest.mark.asyncio
-async def test_deep_analyze_falls_back_to_web_search_when_summary_insufficient(monkeypatch):
-    prompts: list[str] = []
-    calls = {"summary": 0, "web": 0}
-
-    async def fake_get_bilibili_video_context(_bvid: str) -> dict:
-        return {"status": "unavailable", "skip_reason": "missing_api_token"}
-
-    async def fake_web_search_summary(_query: str, num_results: int = 5) -> dict:
-        calls["summary"] += 1
-        assert num_results == 5
-        return {
-            "summary": "",
-            "results": [
-                {
-                    "title": "弱结果",
-                    "link": "https://example.com/weak",
-                    "snippet": "很短",
-                    "content": "",
-                }
-            ],
-        }
-
-    async def fake_web_search(_query: str, num_results: int = 5) -> list[dict]:
-        calls["web"] += 1
-        assert num_results == 5
-        return [
-            {
-                "title": "补充来源",
-                "link": "https://example.com/full",
-                "snippet": "这里有更完整的来源线索。",
-            }
-        ]
-
-    async def fake_run(prompt: str):
-        prompts.append(prompt)
-        return _FakeAgentResult(
-            MemeRecord(
-                id="依托答辩",
-                title="依托答辩",
-                alias=[],
-                definition="测试定义",
-                origin="测试来源",
-                category=["其他"],
-                heat_index=60,
-                lifecycle_stage="emerging",
-                first_detected_at=date(2026, 3, 31),
-                source_urls=[],
-                confidence_score=0.9,
-                updated_at=date(2026, 3, 31),
-            )
-        )
-
-    monkeypatch.setattr(
-        "meme_detector.researcher.agent.get_bilibili_video_context",
-        fake_get_bilibili_video_context,
-    )
-    monkeypatch.setattr(
-        "meme_detector.researcher.agent.volcengine_web_search_summary",
-        fake_web_search_summary,
-    )
-    monkeypatch.setattr(
-        "meme_detector.researcher.agent.volcengine_web_search",
-        fake_web_search,
-    )
-    monkeypatch.setattr("meme_detector.researcher.agent.get_current_run_id", lambda: None)
-    monkeypatch.setattr(deep_agent, "run", fake_run)
-
-    record = await _deep_analyze(
-        word="依托答辩",
-        sample_comments="- 这也太依托答辩了",
-        video_refs=[],
-        score=999.0,
-        today=date(2026, 3, 31),
-    )
-
-    assert record is not None
-    assert calls == {"summary": 1, "web": 1}
-    assert prompts
-    assert "总结版搜索是否足够: 否" in prompts[0]
-    assert "普通网页搜索补充" in prompts[0]
-    assert "补充来源" in prompts[0]
-
-
-@pytest.mark.asyncio
-async def test_run_research_does_not_auto_run_miner(tmp_path, monkeypatch):
+async def test_run_research_does_not_block_on_pending_miner_video(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "meme_detector.archivist.duckdb_store.settings.duckdb_path",
         str(tmp_path / "research.db"),
@@ -310,45 +37,336 @@ async def test_run_research_does_not_auto_run_miner(tmp_path, monkeypatch):
     )
     conn.close()
 
-    conn = get_conn()
-    upsert_scout_candidates(
-        conn,
-        [
-            {
-                "word": "依托答辩",
-                "score": 91.0,
-                "is_new_word": True,
-                "sample_comments": "- 这也太依托答辩了",
-                "explanation": "Research 预筛候选",
-                "video_refs": [],
-            }
-        ],
-    )
-    conn.close()
-
-    async def fail_batch_screen(_candidates: list[dict]) -> list[QuickScreenResult]:
-        raise AssertionError("research should not screen candidates while miner backlog exists")
-
-    monkeypatch.setattr(
-        "meme_detector.researcher.agent._batch_screen",
-        fail_batch_screen,
-    )
-
     result = await run_research()
 
-    assert result["bootstrapped_count"] == 0
-    assert result["accepted_count"] == 0
-    assert result["pending_count"] == 0
-    assert result["blocked_pending_video_count"] == 1
+    assert result.pending_count == 0
+    assert result.accepted_count == 0
+    assert result.rejected_count == 0
+    assert result.blocked_pending_video_count == 0
 
     conn = get_conn()
     pending_videos = get_pending_scout_raw_videos(conn)
-    row = conn.execute(
-        "SELECT word, status FROM candidates WHERE word = ?",
-        ["依托答辩"],
-    ).fetchone()
     conn.close()
 
     assert len(pending_videos) == 1
     assert pending_videos[0]["bvid"] == "BV1BOOT001"
-    assert row == ("依托答辩", "pending")
+
+
+@pytest.mark.asyncio
+async def test_run_research_consumes_queued_bundle(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        str(tmp_path / "research-bundle.db"),
+    )
+
+    conn = get_conn()
+    upsert_comment_bundle(
+        conn,
+        MinerBundle.model_validate(
+            {
+                "bundle_id": "bundle_research_1",
+                "insight": {
+                    "insight_id": "insight_research_1",
+                    "bvid": "BV1RBUNDL1",
+                    "collected_date": date(2026, 4, 9),
+                    "comment_text": "闭嘴，如果你惹怒了我，并且不讲异国日记！",
+                    "worth_investigating": True,
+                    "signal_score": 0.91,
+                    "reason": "模板句与实体填槽混合。",
+                    "status": "bundled",
+                },
+                "video_refs": [
+                    {
+                        "bvid": "BV1RBUNDL1",
+                        "title": "测试视频",
+                        "url": "https://www.bilibili.com/video/BV1RBUNDL1",
+                        "partition": "动画",
+                        "collected_date": date(2026, 4, 9),
+                    }
+                ],
+                "spans": [
+                    {
+                        "span_id": "span_research_1",
+                        "insight_id": "insight_research_1",
+                        "raw_text": "闭嘴，如果你惹怒了我",
+                        "normalized_text": "闭嘴如果你惹怒了我",
+                        "span_type": "template_core",
+                        "char_start": 0,
+                        "char_end": 10,
+                        "confidence": 0.88,
+                        "is_primary": True,
+                        "query_priority": "high",
+                        "reason": "模板句。",
+                    }
+                ],
+                "hypotheses": [
+                    {
+                        "hypothesis_id": "hyp_research_1",
+                        "insight_id": "insight_research_1",
+                        "candidate_title": "闭嘴，如果你惹怒了我……",
+                        "hypothesis_type": "template_meme",
+                        "miner_opinion": "模板句是传播核心。",
+                        "support_score": 0.8,
+                        "counter_score": 0.1,
+                        "uncertainty_score": 0.2,
+                        "suggested_action": "search_then_review",
+                        "status": "queued",
+                    }
+                ],
+                "hypothesis_spans": [
+                    {
+                        "hypothesis_id": "hyp_research_1",
+                        "span_id": "span_research_1",
+                        "role": "primary",
+                    }
+                ],
+                "evidences": [
+                    {
+                        "evidence_id": "ev_research_1",
+                        "hypothesis_id": "hyp_research_1",
+                        "span_id": "span_research_1",
+                        "query": "闭嘴 如果你惹怒了我",
+                        "query_mode": "literal",
+                        "source_kind": "web_search_summary",
+                        "source_title": "测试来源",
+                        "source_url": "https://example.com/source",
+                        "snippet": "这是模板句。",
+                        "evidence_direction": "supports_template",
+                        "evidence_strength": 0.8,
+                    }
+                ],
+                "miner_summary": {
+                    "recommended_hypothesis_id": "hyp_research_1",
+                    "should_queue_for_research": True,
+                    "reason": "模板句证据更强。",
+                },
+            }
+        ),
+    )
+    conn.close()
+
+    async def fake_decide_bundle(bundle, **_kwargs):
+        assert bundle.bundle_id == "bundle_research_1"
+        return ResearchDecision.model_validate(
+            {
+                "decision_id": "decision_bundle_research_1",
+                "bundle_id": bundle.bundle_id,
+                "target_hypothesis_id": bundle.hypotheses[0].hypothesis_id,
+                "decision": "rewrite_title",
+                "final_title": "闭嘴，如果你惹怒了我……",
+                "target_record_id": "闭嘴，如果你惹怒了我……",
+                "confidence": 0.86,
+                "reason": "传播核心是模板句，不是作品名填槽。",
+                "evidence_summary": {
+                    "support_count": 2,
+                    "counter_count": 1,
+                    "unclear_count": 0,
+                },
+                "assessment": {
+                    "is_core_meme_unit": True,
+                    "is_reusable_expression": True,
+                    "is_entity_reference_only": False,
+                    "needs_human_review": False,
+                    "competing_hypothesis_exists": False,
+                },
+                "record": {
+                    "id": "闭嘴，如果你惹怒了我……",
+                    "title": "闭嘴，如果你惹怒了我……",
+                    "alias": ["闭嘴，如果你惹怒了我"],
+                    "definition": "一种模仿放狠话的模板句式。",
+                    "origin": "常见于表情包和二创改写语境。",
+                    "category": ["二次元", "其他"],
+                    "platform": "Bilibili",
+                    "heat_index": 68,
+                    "lifecycle_stage": "emerging",
+                    "first_detected_at": date(2026, 4, 9),
+                    "source_urls": ["https://example.com/source"],
+                    "confidence_score": 0.86,
+                    "human_verified": False,
+                    "updated_at": date(2026, 4, 9),
+                },
+            }
+        )
+
+    async def fake_verify_urls(urls: list[str]) -> list[str]:
+        return urls
+
+    monkeypatch.setattr("meme_detector.researcher.agent._decide_bundle", fake_decide_bundle)
+    monkeypatch.setattr("meme_detector.researcher.agent.verify_urls", fake_verify_urls)
+
+    result = await run_research()
+
+    assert result.pending_count == 1
+    assert result.adjudicated_count == 1
+    assert result.accepted_count == 1
+    assert result.rejected_count == 0
+
+    conn = get_conn()
+    bundle = get_comment_bundle(conn, bundle_id="bundle_research_1")
+    decision_row = conn.execute(
+        "SELECT decision FROM research_decisions WHERE decision_id = ?",
+        ["decision_bundle_research_1"],
+    ).fetchone()
+    hypothesis_row = conn.execute(
+        "SELECT status FROM hypotheses WHERE hypothesis_id = ?",
+        ["hyp_research_1"],
+    ).fetchone()
+    meme_row = conn.execute(
+        "SELECT title FROM meme_records WHERE id = ?",
+        ["闭嘴，如果你惹怒了我……"],
+    ).fetchone()
+    conn.close()
+
+    assert bundle is not None
+    assert decision_row == ("rewrite_title",)
+    assert hypothesis_row == ("accepted",)
+    assert meme_row == ("闭嘴，如果你惹怒了我……",)
+
+
+@pytest.mark.asyncio
+async def test_run_research_consumes_evidenced_bundle(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        str(tmp_path / "research-evidenced-bundle.db"),
+    )
+
+    conn = get_conn()
+    upsert_comment_bundle(
+        conn,
+        MinerBundle.model_validate(
+            {
+                "bundle_id": "bundle_research_evidenced_1",
+                "insight": {
+                    "insight_id": "insight_research_evidenced_1",
+                    "bvid": "BV1REVID001",
+                    "collected_date": date(2026, 4, 9),
+                    "comment_text": "今天也要电子榨菜",
+                    "worth_investigating": True,
+                    "signal_score": 0.82,
+                    "reason": "已有明确证据，但未进入深度排队。",
+                    "status": "bundled",
+                },
+                "video_refs": [
+                    {
+                        "bvid": "BV1REVID001",
+                        "title": "测试视频",
+                        "url": "https://www.bilibili.com/video/BV1REVID001",
+                        "partition": "动画",
+                        "collected_date": date(2026, 4, 9),
+                    }
+                ],
+                "spans": [
+                    {
+                        "span_id": "span_research_evidenced_1",
+                        "insight_id": "insight_research_evidenced_1",
+                        "raw_text": "电子榨菜",
+                        "normalized_text": "电子榨菜",
+                        "span_type": "quote_core",
+                        "char_start": 5,
+                        "char_end": 9,
+                        "confidence": 0.9,
+                        "is_primary": True,
+                        "query_priority": "high",
+                        "reason": "稳定复用短语。",
+                    }
+                ],
+                "hypotheses": [
+                    {
+                        "hypothesis_id": "hyp_research_evidenced_1",
+                        "insight_id": "insight_research_evidenced_1",
+                        "candidate_title": "电子榨菜",
+                        "hypothesis_type": "quote_meme",
+                        "miner_opinion": "短语本身有独立传播性。",
+                        "support_score": 0.78,
+                        "counter_score": 0.08,
+                        "uncertainty_score": 0.18,
+                        "suggested_action": "search_optional",
+                        "status": "evidenced",
+                    }
+                ],
+                "hypothesis_spans": [
+                    {
+                        "hypothesis_id": "hyp_research_evidenced_1",
+                        "span_id": "span_research_evidenced_1",
+                        "role": "primary",
+                    }
+                ],
+                "evidences": [
+                    {
+                        "evidence_id": "ev_research_evidenced_1",
+                        "hypothesis_id": "hyp_research_evidenced_1",
+                        "span_id": "span_research_evidenced_1",
+                        "query": "电子榨菜",
+                        "query_mode": "literal",
+                        "source_kind": "web_search_result",
+                        "source_title": "测试来源",
+                        "source_url": "https://example.com/source",
+                        "snippet": "常指下饭视频或陪伴式内容。",
+                        "evidence_direction": "supports_meme",
+                        "evidence_strength": 0.72,
+                    }
+                ],
+                "miner_summary": {
+                    "recommended_hypothesis_id": "hyp_research_evidenced_1",
+                    "should_queue_for_research": False,
+                    "reason": "现有证据已经足够进入轻量裁决。",
+                },
+            }
+        ),
+    )
+    conn.close()
+
+    async def fake_decide_bundle(bundle, **_kwargs):
+        assert bundle.bundle_id == "bundle_research_evidenced_1"
+        return ResearchDecision.model_validate(
+            {
+                "decision_id": "decision_bundle_research_evidenced_1",
+                "bundle_id": bundle.bundle_id,
+                "target_hypothesis_id": bundle.hypotheses[0].hypothesis_id,
+                "decision": "accept",
+                "final_title": "电子榨菜",
+                "target_record_id": "电子榨菜",
+                "confidence": 0.83,
+                "reason": "已有证据足以支撑入库。",
+                "evidence_summary": {
+                    "support_count": 2,
+                    "counter_count": 0,
+                    "unclear_count": 0,
+                },
+                "assessment": {
+                    "is_core_meme_unit": True,
+                    "is_reusable_expression": True,
+                    "is_entity_reference_only": False,
+                    "needs_human_review": False,
+                    "competing_hypothesis_exists": False,
+                },
+                "record": {
+                    "id": "电子榨菜",
+                    "title": "电子榨菜",
+                    "alias": [],
+                    "definition": "指下饭视频或陪伴式内容的网络表达。",
+                    "origin": "常见于视频消费场景中的口语表达。",
+                    "category": ["其他"],
+                    "platform": "Bilibili",
+                    "heat_index": 64,
+                    "lifecycle_stage": "emerging",
+                    "first_detected_at": date(2026, 4, 9),
+                    "source_urls": ["https://example.com/source"],
+                    "confidence_score": 0.83,
+                    "human_verified": False,
+                    "updated_at": date(2026, 4, 9),
+                },
+            }
+        )
+
+    async def fake_verify_urls(urls: list[str]) -> list[str]:
+        return urls
+
+    monkeypatch.setattr("meme_detector.researcher.agent._decide_bundle", fake_decide_bundle)
+    monkeypatch.setattr("meme_detector.researcher.agent.verify_urls", fake_verify_urls)
+
+    result = await run_research()
+
+    assert result.pending_count == 1
+    assert result.adjudicated_count == 1
+    assert result.accepted_count == 1

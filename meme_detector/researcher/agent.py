@@ -1,9 +1,5 @@
 """
-AI 分析模块：三步流程对候选词进行梗识别和溯源。
-
-Step 1: OpenAI-compatible LLM 批量快速筛选（低成本）
-Step 2: 深度分析 + 工具调用（仅高置信度候选词）
-Step 3: 来源 URL 验证（防幻觉）
+AI 分析模块：基于评论证据包对 hypothesis 做最终裁决。
 """
 
 from __future__ import annotations
@@ -12,203 +8,193 @@ from datetime import date
 
 from rich.progress import track
 
-import meme_detector.researcher.deep_analysis as _deep_analysis_module
+import meme_detector.researcher.decider as _decider_module
 from meme_detector.config import settings
 from meme_detector.logging_utils import get_logger
-from meme_detector.miner.video_context import get_bilibili_video_context
-from meme_detector.researcher.deep_analysis import (
-    build_research_provider as _build_research_provider,
-    deep_agent,
-)
-from meme_detector.researcher.bootstrap import (
-    bootstrap_candidates_from_miner as _bootstrap_candidates_from_miner,
-)
+from meme_detector.pipeline_service import update_job_runtime_progress
 from meme_detector.researcher.models import ResearchRunResult
 from meme_detector.researcher.persistence import (
-    accept_candidate as _accept_candidate,
-    list_pending_candidates as _list_pending_candidates,
-    list_pending_scout_videos as _list_pending_scout_videos,
-    reject_candidates as _reject_candidates,
-)
-from meme_detector.researcher.screening import (
-    batch_screen as _batch_screen,
-    partition_screen_results as _partition_screen_results,
+    list_queued_bundles as _list_queued_bundles,
+    load_bundle as _load_bundle,
+    persist_research_decision as _persist_research_decision,
 )
 from meme_detector.researcher.tools import (
     verify_urls,
-    volcengine_web_search,
-    volcengine_web_search_summary,
 )
-from meme_detector.run_tracker import get_current_run_id
 
 logger = get_logger(__name__)
 
 
-async def _deep_analyze(*args, **kwargs):
-    # 保持 agent 模块作为稳定 monkeypatch 入口。
-    _deep_analysis_module.get_bilibili_video_context = get_bilibili_video_context
-    _deep_analysis_module.volcengine_web_search_summary = volcengine_web_search_summary
-    _deep_analysis_module.volcengine_web_search = volcengine_web_search
-    _deep_analysis_module.get_current_run_id = get_current_run_id
-    return await _deep_analysis_module.deep_analyze(*args, **kwargs)
+async def _decide_bundle(*args, **kwargs):
+    return await _decider_module.decide_bundle(*args, **kwargs)
 
 
 # ── 主流程 ──────────────────────────────────────────────────
 
 async def run_research() -> ResearchRunResult:
-    """完整的 AI 分析流程。"""
+    """评论证据包裁决主流程。"""
     logger.info("researcher started", extra={"event": "research_started"})
+    update_job_runtime_progress(
+        "research",
+        phase="loading",
+        current=0,
+        total=0,
+        unit="证据包",
+        message="正在载入待裁决证据包",
+    )
 
-    pending_videos = _list_pending_scout_videos()
-    if pending_videos:
-        logger.warning(
-            "research blocked by pending miner videos",
-            extra={
-                "event": "research_blocked_by_pending_miner_videos",
-                "video_count": len(pending_videos),
-            },
-        )
-        return ResearchRunResult.blocked_by_pending_videos(len(pending_videos))
-
-    bootstrapped_candidates = await _bootstrap_candidates_from_miner()
-    candidates = _list_pending_candidates(limit=settings.ai_batch_size)
-    result = ResearchRunResult(
-        pending_count=len(candidates),
-        bootstrapped_count=len(bootstrapped_candidates),
+    queued_bundles = _list_queued_bundles(limit=settings.ai_batch_size)
+    result = ResearchRunResult(pending_count=len(queued_bundles))
+    update_job_runtime_progress(
+        "research",
+        phase="loading",
+        current=0,
+        total=len(queued_bundles),
+        unit="证据包",
+        message=f"已载入 {len(queued_bundles)} 个待裁决证据包",
     )
     logger.info(
-        "research bootstrap summary",
+        "research queued bundle summary",
         extra={
-            "event": "research_bootstrap_summary",
-            "result_count": len(bootstrapped_candidates),
-            "pending_count": len(candidates),
+            "event": "research_bundle_queue_summary",
+            "pending_count": len(queued_bundles),
         },
     )
 
-    if not candidates:
-        logger.info("no pending candidates for research", extra={"event": "research_no_pending_candidates"})
+    if not queued_bundles:
+        update_job_runtime_progress(
+            "research",
+            phase="idle",
+            current=0,
+            total=0,
+            unit="证据包",
+            message="没有待裁决证据包",
+        )
+        logger.info("no pending bundles for research", extra={"event": "research_no_pending_bundles"})
         return result
 
     logger.info(
-        "research candidates loaded",
-        extra={"event": "research_candidates_loaded", "candidate_count": len(candidates)},
+        "research bundles loaded",
+        extra={"event": "research_bundles_loaded", "bundle_count": len(queued_bundles)},
     )
 
-    # ── Step 1: 批量快速筛选 ─────────────────────────────────
-    logger.info("research step 1 screening started", extra={"event": "research_step_screening_started"})
-    screen_results = await _batch_screen(candidates)
-    result.screened_count = len(screen_results)
-
-    screen_map = {r.word: r for r in screen_results}
-    to_deep, rejected, pending_retry = _partition_screen_results(candidates, screen_results)
-    _reject_candidates(rejected)
-    result.rejected_words = rejected
-    result.rejected_count = len(rejected)
-    result.deep_analysis_count = len(to_deep)
-    result.screen_failed_words = pending_retry
-
-    logger.info(
-        "research screening summary",
-        extra={
-            "event": "research_screening_summary",
-            "accepted_count": len(to_deep),
-            "rejected_count": len(rejected),
-            "failed_count": len(pending_retry),
-        },
-    )
-    logger.info(
-        "research screening completed",
-        extra={
-            "event": "research_screening_completed",
-            "candidate_count": len(candidates),
-            "result_count": len(screen_results),
-            "accepted_count": len(to_deep),
-            "rejected_count": len(rejected),
-            "failed_count": len(pending_retry),
-        },
-    )
-
-    if not to_deep:
-        logger.info(
-            "research no candidates passed screening",
-            extra={
-                "event": "research_no_candidates_passed_screening",
-                "candidate_count": len(candidates),
-                "rejected_count": len(rejected),
-                "failed_count": len(pending_retry),
-            },
-        )
-        return result
-
-    # ── Step 2 & 3: 深度分析 + URL 验证 ──────────────────────
-    logger.info("research step 2 deep analysis started", extra={"event": "research_step_deep_analysis_started"})
+    logger.info("research bundle adjudication started", extra={"event": "research_bundle_adjudication_started"})
     today = date.today()
 
-    for c in track(to_deep, description="分析中..."):
-        word = c["word"]
-        screen = screen_map.get(word)
+    for item in track(queued_bundles, description="分析中..."):
+        bundle_id = str(item.get("bundle_id", "")).strip()
+        processed_count = result.adjudicated_count
+        update_job_runtime_progress(
+            "research",
+            phase="adjudicating",
+            current=processed_count,
+            total=len(queued_bundles),
+            unit="证据包",
+            message=f"正在裁决第 {processed_count + 1}/{len(queued_bundles)} 个证据包：{bundle_id}",
+        )
+        bundle = _load_bundle(bundle_id)
+        if bundle is None:
+            result.failed_bundle_ids.append(bundle_id)
+            logger.warning(
+                "research bundle missing during load",
+                extra={"event": "research_bundle_missing", "bundle_id": bundle_id},
+            )
+            continue
+        result.adjudicated_count += 1
         logger.info(
-            "research candidate deep analysis started",
+            "research bundle adjudication started",
             extra={
-                "event": "research_candidate_started",
-                "word": word,
-                "score": c["score"],
-                "video_count": len(c.get("video_refs", [])),
+                "event": "research_bundle_started",
+                "bundle_id": bundle_id,
+                "bvid": bundle.insight.bvid,
+                "hypothesis_count": len(bundle.hypotheses),
             },
         )
 
-        record = await _deep_analyze(
-            word=word,
-            sample_comments=c.get("sample_comments", ""),
-            video_refs=c.get("video_refs", []),
-            score=c["score"],
-            today=today,
-        )
-        if record is None:
-            result.failed_words.append(word)
+        try:
+            decision = await _decide_bundle(bundle, today=today)
+        except Exception:
+            result.failed_bundle_ids.append(bundle_id)
             logger.warning(
-                "research candidate deep analysis returned no record",
-                extra={"event": "research_candidate_failed", "word": word},
+                "research bundle adjudication failed",
+                extra={"event": "research_bundle_failed", "bundle_id": bundle_id},
+                exc_info=True,
+            )
+            update_job_runtime_progress(
+                "research",
+                phase="adjudicating",
+                current=result.adjudicated_count,
+                total=len(queued_bundles),
+                unit="证据包",
+                message=f"证据包裁决失败：{bundle_id}",
             )
             continue
 
-        # Step 3: URL 验证
-        if record.source_urls:
-            original_source_count = len(record.source_urls)
-            valid_urls = await verify_urls(record.source_urls)
+        if decision.record is not None and decision.record.source_urls:
+            original_source_count = len(decision.record.source_urls)
+            valid_urls = await verify_urls(decision.record.source_urls)
             logger.info(
                 "research source urls verified",
                 extra={
                     "event": "research_source_urls_verified",
-                    "word": word,
+                    "bundle_id": bundle_id,
                     "source_count": original_source_count,
                     "valid_source_count": len(valid_urls),
                 },
             )
-            record.source_urls = valid_urls
-            # 有效来源少于预期时，适当降低置信度
+            decision.record.source_urls = valid_urls
             if original_source_count > 0 and len(valid_urls) < original_source_count / 2:
-                record.confidence_score *= 0.8
+                decision.record.confidence_score *= 0.8
                 logger.info(
                     "research confidence lowered after source verification",
                     extra={
                         "event": "research_confidence_lowered_after_source_verification",
-                        "word": word,
+                        "bundle_id": bundle_id,
                         "source_count": original_source_count,
                         "valid_source_count": len(valid_urls),
                     },
                 )
 
-        await _accept_candidate(word, record)
-        result.add_accepted_record(record)
-        logger.info(
-            "research candidate accepted",
-            extra={
-                "event": "research_candidate_accepted",
-                "word": word,
-                "source_count": len(record.source_urls),
-                "confidence_score": record.confidence_score,
-            },
+        await _persist_research_decision(decision)
+
+        if decision.decision.value in {"accept", "rewrite_title"} and decision.record is not None:
+            result.add_accepted_record(decision.record)
+            logger.info(
+                "research bundle accepted",
+                extra={
+                    "event": "research_bundle_accepted",
+                    "bundle_id": bundle_id,
+                    "title": decision.record.title,
+                    "confidence_score": decision.record.confidence_score,
+                },
+            )
+        elif decision.decision.value == "reject":
+            result.rejected_count += 1
+            result.rejected_bundle_ids.append(bundle_id)
+            logger.info(
+                "research bundle rejected",
+                extra={"event": "research_bundle_rejected", "bundle_id": bundle_id},
+            )
+        else:
+            result.failed_bundle_ids.append(bundle_id)
+            logger.info(
+                "research bundle ended without direct acceptance",
+                extra={
+                    "event": "research_bundle_non_accepting_decision",
+                    "bundle_id": bundle_id,
+                    "decision": decision.decision.value,
+                },
+            )
+        update_job_runtime_progress(
+            "research",
+            phase="adjudicating",
+            current=result.adjudicated_count,
+            total=len(queued_bundles),
+            unit="证据包",
+            message=(
+                f"已完成 {result.adjudicated_count}/{len(queued_bundles)} 个证据包，"
+                f"接受 {result.accepted_count} / 驳回 {result.rejected_count}"
+            ),
         )
 
     logger.info(
@@ -217,7 +203,7 @@ async def run_research() -> ResearchRunResult:
             "event": "research_completed",
             "accepted_count": result.accepted_count,
             "rejected_count": result.rejected_count,
-            "failed_count": len(result.failed_words),
+            "failed_count": len(result.failed_bundle_ids),
         },
     )
     return result

@@ -19,7 +19,7 @@ from meme_detector.run_tracker import execute_tracked_job
 
 logger = get_logger(__name__)
 
-JOB_NAMES = ("scout", "miner", "research")
+JOB_NAMES = ("scout", "miner_insights", "miner_bundles", "miner", "research")
 _state_lock = Lock()
 _background_tasks: set[asyncio.Task[Any]] = set()
 _job_states: dict[str, dict[str, Any]] = {
@@ -30,6 +30,12 @@ _job_states: dict[str, dict[str, Any]] = {
         "last_started_at": None,
         "last_finished_at": None,
         "last_error": "",
+        "phase": "",
+        "progress_current": 0,
+        "progress_total": 0,
+        "progress_unit": "",
+        "progress_message": "",
+        "updated_at": None,
     }
     for job_name in JOB_NAMES
 }
@@ -63,6 +69,12 @@ def _mark_job_started(job_name: str, trigger_mode: str) -> bool:
         state["started_at"] = now
         state["last_started_at"] = now
         state["last_error"] = ""
+        state["phase"] = "starting"
+        state["progress_current"] = 0
+        state["progress_total"] = 0
+        state["progress_unit"] = ""
+        state["progress_message"] = "任务启动中"
+        state["updated_at"] = now
         logger.info(
             "job runtime state started",
             extra={
@@ -82,6 +94,12 @@ def _mark_job_finished(job_name: str, error: str = "") -> None:
         state["last_error"] = error
         state["trigger_mode"] = ""
         state["started_at"] = None
+        state["phase"] = ""
+        state["progress_current"] = 0
+        state["progress_total"] = 0
+        state["progress_unit"] = ""
+        state["progress_message"] = ""
+        state["updated_at"] = state["last_finished_at"]
         logger.info(
             "job runtime state finished",
             extra={
@@ -92,11 +110,45 @@ def _mark_job_finished(job_name: str, error: str = "") -> None:
         )
 
 
+def update_job_runtime_progress(
+    job_name: str,
+    *,
+    phase: str | None = None,
+    current: int | None = None,
+    total: int | None = None,
+    unit: str | None = None,
+    message: str | None = None,
+) -> None:
+    with _state_lock:
+        state = _job_states.get(job_name)
+        if state is None:
+            raise KeyError(job_name)
+        if phase is not None:
+            state["phase"] = phase
+        if current is not None:
+            state["progress_current"] = max(0, int(current))
+        if total is not None:
+            state["progress_total"] = max(0, int(total))
+        if unit is not None:
+            state["progress_unit"] = unit
+        if message is not None:
+            state["progress_message"] = message
+        state["updated_at"] = datetime.now()
+
+
 def _resolve_runner(job_name: str):
     if job_name == "scout":
         from meme_detector.scout.scorer import run_scout
 
         return run_scout
+    if job_name == "miner_insights":
+        from meme_detector.miner.scorer import run_miner_insights
+
+        return run_miner_insights
+    if job_name == "miner_bundles":
+        from meme_detector.miner.scorer import run_miner_bundles
+
+        return run_miner_bundles
     if job_name == "miner":
         from meme_detector.miner.scorer import run_miner
 

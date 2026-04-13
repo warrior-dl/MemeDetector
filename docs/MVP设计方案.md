@@ -3,6 +3,8 @@
 > 文档状态：草稿
 > 更新日期：2026-03-24
 > 定位：面向开发团队的可执行 MVP 规格文档
+>
+> 说明：本文档中的 Research 流程仍以“候选词”为中心。自 2026-04-09 起，新的实现方案已改为“评论证据包 + hypothesis 裁决”架构，详见 [评论证据包重构方案](./评论证据包重构方案.md)。
 
 ---
 
@@ -68,7 +70,7 @@
 | 采集 | bilibili-api (Nemo2011 fork) | latest | 内置 WBI 签名 + curl_cffi 指纹 |
 | 调度 | APScheduler | 3.x | 轻量，支持 asyncio |
 | 分词 | Jieba | latest | 自定义词典支持 |
-| AI 框架 | PydanticAI | latest | 强类型工具调用 |
+| AI 框架 | PydanticAI | latest | 结构化输出与工作流编排 |
 | LLM | DeepSeek-V3 | API | 批量筛选；高性价比 |
 | 词频存储 | DuckDB | latest | 嵌入式，SQL 支持窗口函数 |
 | 梗库检索 | Meilisearch | v1.x | Rust 编写，开箱即用 |
@@ -98,7 +100,7 @@ MemeDetector/
 │   ├── researcher/             # 模块二：AI 分析
 │   │   ├── __init__.py
 │   │   ├── agent.py            # PydanticAI Agent 定义
-│   │   ├── tools.py            # 工具：B站搜索、Web搜索
+│   │   ├── tools.py            # 工作流辅助：火山联网搜索、URL验证
 │   │   ├── validator.py        # 来源 URL 真实性验证
 │   │   └── models.py           # MemeRecord Pydantic 模型
 │   │
@@ -233,9 +235,10 @@ Step 1: 快速批量筛选（DeepSeek-V3，batch 模式）
   成本控制：每次最多 50 个候选词一批
 
 Step 2: 深度分析（仅 confidence >= 0.65）
-  工具调用：
-    - bilibili_search(word)      → 获取相关视频标题/描述
-    - web_search(word + "梗")   → 获取外部背景
+  工作流固定搜索步骤：
+    - volcengine_web_search_summary(word) → 优先获取外部背景摘要
+    - 摘要不足时，再补 volcengine_web_search(word) 获取网页结果
+  LLM 只消费系统已执行好的搜索结果，不直接调用搜索后端
   输出：完整 MemeRecord（含 origin, definition, source_urls）
 
 Step 3: 来源验证
@@ -319,7 +322,7 @@ GET  /stats                    # 统计概览（总量、本周新增等）
     └── confidence >= 0.65
            │
            ▼
-        [Researcher] Step2: 工具调用深度分析
+        [Researcher] Step2: 工作流搜索后深度分析
            │
            ▼
         [Researcher] Step3: URL 验证
@@ -416,7 +419,7 @@ services:
 ### Week 3：AI 分析链路
 - [ ] 实现 `models.py`：MemeRecord Pydantic 模型
 - [ ] 实现 `agent.py`：PydanticAI Agent，三步分析流程
-- [ ] 实现 `tools.py`：Bilibili 搜索 + Serper Web 搜索工具
+- [ ] 实现 `tools.py`：火山联网搜索与 URL 验证辅助函数
 - [ ] 实现 `validator.py`：URL 真实性验证
 - [ ] 端到端测试：输入候选词 → 输出 MemeRecord
 

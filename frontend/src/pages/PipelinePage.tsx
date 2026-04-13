@@ -6,6 +6,7 @@ import {
   Descriptions,
   Empty,
   List,
+  Progress,
   Row,
   Select,
   Space,
@@ -19,6 +20,41 @@ import { PageSection } from "../ui/PageSection";
 import { JsonPanel } from "../ui/JsonPanel";
 import { RunStatusTag } from "../ui/StatusTags";
 import { formatDateTime, formatDuration, formatOptionalDateTime } from "../utils/format";
+
+function renderJobProgress(job: {
+  is_running?: boolean;
+  active_phase?: string;
+  active_progress_current?: number;
+  active_progress_total?: number;
+  active_progress_unit?: string;
+  active_progress_message?: string;
+}) {
+  const current = Number(job.active_progress_current ?? 0);
+  const total = Number(job.active_progress_total ?? 0);
+  const hasProgress = total > 0;
+  const percent = hasProgress ? Math.max(0, Math.min(100, Math.round((current / total) * 100))) : 0;
+  const detailText = hasProgress
+    ? `${current}/${total}${job.active_progress_unit ? ` ${job.active_progress_unit}` : ""}`
+    : job.active_phase || "运行中";
+
+  if (!job.is_running) {
+    return (
+      <Typography.Text type="secondary">
+        当前空闲
+      </Typography.Text>
+    );
+  }
+
+  return (
+    <Space direction="vertical" size={6} style={{ width: "100%" }}>
+      <Typography.Text>{job.active_progress_message || "任务运行中"}</Typography.Text>
+      {hasProgress ? <Progress percent={percent} size="small" status="active" /> : <Progress percent={100} size="small" status="active" showInfo={false} />}
+      <Typography.Text type="secondary">
+        {detailText}
+      </Typography.Text>
+    </Space>
+  );
+}
 
 export function PipelinePage() {
   const [jobFilter, setJobFilter] = useState<string>();
@@ -88,6 +124,7 @@ export function PipelinePage() {
                     {job.job_name || job.id} · 下次运行 {formatOptionalDateTime(job.next_run_time)}
                   </Typography.Text>
                   <Typography.Text type="secondary">触发器: {job.trigger}</Typography.Text>
+                  {renderJobProgress(job)}
                   {job.last_error ? (
                     <Alert type="error" message="最近一次运行报错" description={job.last_error} />
                   ) : null}
@@ -139,6 +176,7 @@ export function PipelinePage() {
                           <Typography.Text type="secondary">
                             最近完成：{formatOptionalDateTime(item.last_finished_at)}
                           </Typography.Text>
+                          {renderJobProgress(item)}
                         </Space>
                       }
                     />
@@ -159,9 +197,10 @@ export function PipelinePage() {
                   placeholder="任务"
                   value={jobFilter}
                   style={{ width: 120 }}
-                  options={[
+                options={[
                     { label: "Scout", value: "scout" },
-                    { label: "Miner", value: "miner" },
+                    { label: "Miner Stage 1", value: "miner_insights" },
+                    { label: "Miner Stage 2", value: "miner_bundles" },
                     { label: "Research", value: "research" },
                   ]}
                   onChange={(value) => setJobFilter(value)}

@@ -33,7 +33,7 @@ import { formatOptionalDateTime } from "../utils/format";
 
 export function ScoutPage() {
   const { message } = App.useApp();
-  const [candidateStatus, setCandidateStatus] = useState<string>();
+  const [researchStatus, setResearchStatus] = useState<string>();
   const [partition, setPartition] = useState("");
   const [keywordInput, setKeywordInput] = useState("");
   const deferredKeyword = useDeferredValue(keywordInput.trim());
@@ -43,7 +43,7 @@ export function ScoutPage() {
   const [stageDraft, setStageDraft] = useState<string>();
 
   const videosQuery = useScoutRawVideosPage({
-    candidateStatus,
+    researchStatus,
     partition: partition.trim() || undefined,
     keyword: deferredKeyword || undefined,
     limit: pageSize,
@@ -104,6 +104,18 @@ export function ScoutPage() {
         render: (value?: number) => value ?? 0,
       },
       {
+        title: "高价值",
+        dataIndex: "high_value_comment_count",
+        width: 96,
+        render: (value?: number) => value ?? 0,
+      },
+      {
+        title: "证据包",
+        dataIndex: "bundle_count",
+        width: 96,
+        render: (value?: number) => value ?? 0,
+      },
+      {
         title: "图片",
         dataIndex: "picture_count",
         width: 90,
@@ -132,15 +144,15 @@ export function ScoutPage() {
         <Space wrap>
           <Select
             allowClear
-            placeholder="候选状态"
-            value={candidateStatus}
+            placeholder="Research 状态"
+            value={researchStatus}
             style={{ width: 140 }}
             options={[
               { label: "待提取", value: "pending" },
               { label: "已提取", value: "processed" },
             ]}
             onChange={(value) => {
-              setCandidateStatus(value);
+              setResearchStatus(value);
               setPage(1);
             }}
           />
@@ -252,6 +264,16 @@ export function ScoutPage() {
                               children: String(detail.comment_count ?? 0),
                             },
                             {
+                              key: "high_value_comment_count",
+                              label: "高价值评论",
+                              children: String(detail.high_value_comment_count ?? 0),
+                            },
+                            {
+                              key: "bundle_count",
+                              label: "证据包数",
+                              children: String(detail.bundle_count ?? 0),
+                            },
+                            {
                               key: "picture_count",
                               label: "图片数",
                               children: String(detail.picture_count ?? 0),
@@ -267,9 +289,19 @@ export function ScoutPage() {
                               children: renderPlainStatus(detail.miner_status),
                             },
                             {
-                              key: "candidate_status",
-                              label: "候选提取状态",
-                              children: renderPlainStatus(detail.candidate_status),
+                              key: "miner_attempt_count",
+                              label: "Miner 尝试次数",
+                              children: String(detail.miner_attempt_count ?? 0),
+                            },
+                            {
+                              key: "miner_last_error",
+                              label: "Miner 最近错误",
+                              children: detail.miner_last_error || "--",
+                            },
+                            {
+                              key: "research_status",
+                              label: "Research 状态",
+                              children: renderPlainStatus(detail.research_status),
                             },
                             {
                               key: "updated_at",
@@ -282,6 +314,28 @@ export function ScoutPage() {
                           style={{
                             padding: 16,
                             borderRadius: 12,
+                            background: "#fffdf5",
+                            border: "1px solid #f1e4b8",
+                          }}
+                        >
+                          <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                            <Typography.Text strong>Miner 结果解释</Typography.Text>
+                            <Space wrap>
+                              <PipelineStageTag stage={detail.pipeline_stage} />
+                              <ScoutOutcomeTag
+                                highValueCommentCount={detail.high_value_comment_count}
+                                bundleCount={detail.bundle_count}
+                              />
+                            </Space>
+                            <Typography.Text type="secondary">
+                              {buildScoutOutcomeDescription(detail)}
+                            </Typography.Text>
+                          </Space>
+                        </div>
+                        <div
+                          style={{
+                            padding: 16,
+                            borderRadius: 12,
                             background: "#f7faf9",
                             border: "1px solid #d7ebe7",
                           }}
@@ -289,8 +343,8 @@ export function ScoutPage() {
                           <Space direction="vertical" size={12} style={{ width: "100%" }}>
                             <Typography.Text strong>手动调整阶段</Typography.Text>
                             <Typography.Text type="secondary">
-                              改到“仅 Scout”会重置该视频当天的 Miner 与候选提取状态。
-                              改到“已 Miner”会保留 Miner 完成态，但把对应评论线索重新放回待提取。
+                              改到“仅 Scout”会重置该视频当天的 Miner 与 Research 状态。
+                              改到“已 Miner”会保留评论初筛完成态，并把高价值评论重新放回待生成证据包。
                             </Typography.Text>
                             <Space wrap>
                               <Select
@@ -328,8 +382,8 @@ export function ScoutPage() {
                                             pipeline_stage: updated.pipeline_stage,
                                             miner_status: updated.miner_status,
                                             miner_processed_at: updated.miner_processed_at,
-                                            candidate_status: updated.candidate_status,
-                                            candidate_extracted_at: updated.candidate_extracted_at,
+                                            research_status: updated.research_status,
+                                            research_started_at: updated.research_started_at,
                                             updated_at: updated.updated_at,
                                           }
                                         : current,
@@ -438,9 +492,29 @@ export function ScoutPage() {
 
 function PipelineStageTag({ stage }: { stage?: string }) {
   const color =
-    stage === "researched" ? "purple" : stage === "mined" ? "cyan" : stage === "scouted" ? "blue" : "default";
+    stage === "researched"
+      ? "purple"
+      : stage === "miner_failed"
+        ? "error"
+        : stage === "mining"
+          ? "processing"
+          : stage === "mined"
+            ? "cyan"
+            : stage === "scouted"
+              ? "blue"
+              : "default";
   const label =
-    stage === "researched" ? "已进入 Research" : stage === "mined" ? "已 Miner" : stage === "scouted" ? "仅 Scout" : "--";
+    stage === "researched"
+      ? "已进入 Research"
+      : stage === "miner_failed"
+        ? "Miner 失败"
+        : stage === "mining"
+          ? "Miner 处理中"
+          : stage === "mined"
+            ? "已 Miner"
+            : stage === "scouted"
+              ? "仅 Scout"
+              : "--";
   return <Tag color={color}>{label}</Tag>;
 }
 
@@ -454,7 +528,44 @@ function renderPlainStatus(value?: string) {
   if (value === "pending") {
     return <Tag color="default">pending</Tag>;
   }
+  if (value === "processing") {
+    return <Tag color="processing">processing</Tag>;
+  }
+  if (value === "failed") {
+    return <Tag color="error">failed</Tag>;
+  }
   return <Tag>{value}</Tag>;
+}
+
+function ScoutOutcomeTag({
+  highValueCommentCount,
+  bundleCount,
+}: {
+  highValueCommentCount?: number;
+  bundleCount?: number;
+}) {
+  const highValue = highValueCommentCount ?? 0;
+  const bundles = bundleCount ?? 0;
+  if (bundles > 0) {
+    return <Tag color="success">已生成证据包</Tag>;
+  }
+  if (highValue > 0) {
+    return <Tag color="warning">有高价值评论但未落证据包</Tag>;
+  }
+  return <Tag>无高价值评论</Tag>;
+}
+
+function buildScoutOutcomeDescription(detail: ScoutRawVideoSummary) {
+  const comments = detail.comment_count ?? 0;
+  const highValue = detail.high_value_comment_count ?? 0;
+  const bundles = detail.bundle_count ?? 0;
+  if (bundles > 0) {
+    return `Miner 已处理 ${comments} 条评论，其中 ${highValue} 条被判为高价值，已整理出 ${bundles} 个证据包。`;
+  }
+  if (highValue > 0) {
+    return `Miner 已处理 ${comments} 条评论，其中 ${highValue} 条被判为高价值，但当前没有看到对应证据包，建议继续排查 bundle 落库链路。`;
+  }
+  return `Miner 已处理 ${comments} 条评论，但没有评论进入高价值集合，所以不会生成证据包。`;
 }
 
 function CommentPictures({ pictures }: { pictures: ScoutMediaAsset[] }) {

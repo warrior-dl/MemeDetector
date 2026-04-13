@@ -13,11 +13,9 @@ from pydantic import BaseModel
 from fastapi.responses import FileResponse
 
 from meme_detector.archivist.duckdb_store import (
-    delete_all_candidates,
     get_agent_conversation,
-    get_candidate_source_insights,
-    get_candidates,
-    get_candidates_page,
+    get_comment_bundle_detail,
+    get_comment_bundles_page,
     get_conn,
     get_media_asset,
     get_miner_comment_insight,
@@ -28,7 +26,6 @@ from meme_detector.archivist.duckdb_store import (
     list_agent_conversations,
     list_pipeline_runs,
     update_scout_raw_video_stage,
-    update_candidate_status,
 )
 from meme_detector.archivist.meili_store import (
     get_meme,
@@ -99,9 +96,9 @@ async def get_meme_detail(meme_id: str) -> dict:
 
 @router.get("/scout/raw-videos", summary="分页获取 Scout 原始视频快照")
 async def list_scout_raw_videos(
-    candidate_status: str | None = Query(
+    research_status: str | None = Query(
         None,
-        description="候选提取状态：pending / processed，不传则返回全部",
+        description="Research 状态：pending / processed，不传则返回全部",
     ),
     partition: str | None = Query(None, description="分区关键字过滤"),
     keyword: str | None = Query(None, description="标题 / 描述 / BVID 关键字过滤"),
@@ -111,7 +108,7 @@ async def list_scout_raw_videos(
     return _run_with_conn(
         lambda conn: get_scout_raw_videos_page(
             conn,
-            candidate_status=candidate_status,
+            research_status=research_status,
             partition=partition,
             keyword=keyword,
             limit=limit,
@@ -161,7 +158,10 @@ async def set_scout_raw_video_stage(
 
 @router.get("/miner/comment-insights", summary="分页获取 Miner 评论线索")
 async def list_miner_comment_insights(
-    status: str | None = Query(None, description="状态过滤：pending / processed"),
+    status: str | None = Query(
+        None,
+        description="状态过滤：pending_bundle / bundling / bundled / bundle_failed / discarded",
+    ),
     keyword: str | None = Query(None, description="标题 / 简介 / 评论 / 理由关键字过滤"),
     bvid: str | None = Query(None, description="BVID 关键字过滤"),
     only_meme_candidates: bool = Query(False, description="仅返回潜在梗评论"),
@@ -191,6 +191,34 @@ async def get_miner_comment_insight_detail(insight_id: str) -> dict:
     return insight
 
 
+@router.get("/research/bundles/page", summary="分页获取评论证据包摘要")
+async def list_research_bundles(
+    status: str | None = Query(None, description="状态过滤：bundled / researched"),
+    queued_only: bool = Query(False, description="仅返回存在 queued hypothesis 的证据包"),
+    keyword: str | None = Query(None, description="评论 / 原因 / BVID 关键字过滤"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    return _run_with_conn(
+        lambda conn: get_comment_bundles_page(
+            conn,
+            status=status,
+            queued_only=queued_only,
+            keyword=keyword,
+            limit=limit,
+            offset=offset,
+        )
+    )
+
+
+@router.get("/research/bundles/{bundle_id}", summary="获取评论证据包详情")
+async def get_research_bundle_detail(bundle_id: str) -> dict:
+    bundle = _run_with_conn(lambda conn: get_comment_bundle_detail(conn, bundle_id))
+    if not bundle:
+        raise HTTPException(status_code=404, detail=f"评论证据包 '{bundle_id}' 不存在")
+    return bundle
+
+
 @router.get("/media-assets/{asset_id}", summary="获取媒体资产元数据")
 async def get_media_asset_detail(asset_id: str) -> dict:
     asset = _run_with_conn(lambda conn: get_media_asset(conn, asset_id))
@@ -213,72 +241,6 @@ async def get_media_asset_content(asset_id: str) -> FileResponse:
     return FileResponse(path, media_type=asset.get("mime_type") or None)
 
 
-# ── 候选词管理（内部使用）─────────────────────────────────────
-
-@router.get("/candidates", summary="获取候选梗列表")
-async def list_candidates(
-    status: str | None = Query(
-        None,
-        description="状态过滤：pending / accepted / rejected，不传则返回全部",
-    ),
-    limit: int = Query(50, ge=1, le=200),
-) -> list[dict]:
-    return _run_with_conn(lambda conn: get_candidates(conn, status=status, limit=limit))
-
-
-@router.get("/candidates/page", summary="分页获取候选梗完整信息")
-async def list_candidates_page(
-    status: str | None = Query(
-        None,
-        description="状态过滤：pending / accepted / rejected，不传则返回全部",
-    ),
-    keyword: str | None = Query(None, description="词条 / 解释 / 评论样本关键字过滤"),
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-) -> dict:
-    return _run_with_conn(
-        lambda conn: get_candidates_page(
-            conn,
-            status=status,
-            keyword=keyword,
-            limit=limit,
-            offset=offset,
-        )
-    )
-
-
-@router.get("/candidates/{word}/sources", summary="获取候选梗来源线索")
-async def get_candidate_sources(
-    word: str,
-    limit: int = Query(100, ge=1, le=300),
-) -> dict:
-    result = _run_with_conn(
-        lambda conn: get_candidate_source_insights(conn, word=word, limit=limit)
-    )
-    if not result:
-        raise HTTPException(status_code=404, detail=f"候选词 '{word}' 不存在")
-    return result
-
-
-@router.delete("/candidates", summary="删除所有候选梗")
-async def remove_all_candidates() -> dict:
-    deleted_count = _run_with_conn(delete_all_candidates)
-    return {"deleted_count": deleted_count}
-
-
-@router.post("/candidates/{word}/verify", summary="人工审核候选词")
-async def verify_candidate(
-    word: str,
-    action: str = Query(..., description="操作：accept 或 reject"),
-) -> dict:
-    if action not in ("accept", "reject"):
-        raise HTTPException(status_code=400, detail="action 必须为 accept 或 reject")
-    _run_with_conn(
-        lambda conn: update_candidate_status(conn, word, "accepted" if action == "accept" else "rejected")
-    )
-    return {"word": word, "status": action + "ed"}
-
-
 @router.post("/memes/{meme_id}/verify", summary="标记梗为人工验证")
 async def mark_verified(meme_id: str, verified: bool = True) -> dict:
     ok = await update_human_verified(meme_id, verified)
@@ -291,7 +253,10 @@ async def mark_verified(meme_id: str, verified: bool = True) -> dict:
 
 @router.get("/runs", summary="获取任务运行记录")
 async def list_runs(
-    job_name: str | None = Query(None, description="任务名称：scout / miner / research"),
+    job_name: str | None = Query(
+        None,
+        description="任务名称：scout / miner_insights / miner_bundles / research",
+    ),
     status: str | None = Query(None, description="运行状态：running / success / failed"),
     limit: int = Query(50, ge=1, le=200),
 ) -> list[dict]:
@@ -313,7 +278,8 @@ async def list_jobs() -> list[dict]:
     runtime_states = get_all_job_runtime_states()
     job_name_by_scheduler_id = {
         "daily_scout": "scout",
-        "daily_miner": "miner",
+        "daily_miner_insights": "miner_insights",
+        "daily_miner_bundles": "miner_bundles",
         "weekly_research": "research",
     }
     jobs = []
@@ -329,6 +295,12 @@ async def list_jobs() -> list[dict]:
                 "active_started_at": runtime_state.get("started_at"),
                 "last_finished_at": runtime_state.get("last_finished_at"),
                 "last_error": runtime_state.get("last_error", ""),
+                "active_phase": runtime_state.get("phase", ""),
+                "active_progress_current": runtime_state.get("progress_current", 0),
+                "active_progress_total": runtime_state.get("progress_total", 0),
+                "active_progress_unit": runtime_state.get("progress_unit", ""),
+                "active_progress_message": runtime_state.get("progress_message", ""),
+                "active_updated_at": runtime_state.get("updated_at"),
             }
         )
     return jobs
@@ -376,26 +348,64 @@ async def get_conversation_detail(conversation_id: str) -> dict:
 
 @router.get("/stats", summary="统计概览")
 async def stats() -> dict:
-    rows = _run_with_conn(
+    bundle_rows = _run_with_conn(
         lambda conn: conn.execute(
             """
             SELECT
-                COUNT(*) FILTER (WHERE status='pending')   AS pending,
-                COUNT(*) FILTER (WHERE status='accepted')  AS accepted,
-                COUNT(*) FILTER (WHERE status='rejected')  AS rejected,
+                COUNT(*) FILTER (WHERE status='bundled')    AS bundled,
+                COUNT(*) FILTER (WHERE status='researched') AS researched,
                 COUNT(*)                                    AS total
-            FROM candidates
+            FROM comment_insights
             """
         ).fetchone()
     )
+    pending_miner_video_count = _run_with_conn(
+        lambda conn: conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM scout_raw_videos
+            WHERE miner_status = 'pending'
+            """
+        ).fetchone()[0]
+    )
+    failed_miner_video_count = _run_with_conn(
+        lambda conn: conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM scout_raw_videos
+            WHERE miner_status = 'failed'
+            """
+        ).fetchone()[0]
+    )
+    ready_bundle_count = _run_with_conn(
+        lambda conn: conn.execute(
+            """
+            SELECT COUNT(DISTINCT ci.bundle_id)
+            FROM comment_insights ci
+            JOIN hypotheses h ON h.bundle_id = ci.bundle_id
+            WHERE ci.status = 'bundled'
+              AND h.status IN ('queued', 'evidenced')
+            """
+        ).fetchone()[0]
+    )
 
     word_count_result = await search_memes("", limit=0)
+    bundled_count = int(bundle_rows[0] or 0)
+    researched_count = int(bundle_rows[1] or 0)
+    total_count = int(bundle_rows[2] or 0)
+    pending_miner_video_count = int(pending_miner_video_count or 0)
+    failed_miner_video_count = int(failed_miner_video_count or 0)
+    ready_bundle_count = int(ready_bundle_count or 0)
     return {
-        "candidates": {
-            "total": rows[3],
-            "pending": rows[0],
-            "accepted": rows[1],
-            "rejected": rows[2],
+        "bundles": {
+            "total": total_count,
+            "bundled": bundled_count,
+            "researched": researched_count,
+            "ready": ready_bundle_count,
+        },
+        "blockers": {
+            "pending_miner_videos": pending_miner_video_count,
+            "failed_miner_videos": failed_miner_video_count,
         },
         "memes_in_library": word_count_result.get("estimatedTotalHits", 0),
     }

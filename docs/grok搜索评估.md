@@ -45,7 +45,7 @@
 
 **优化建议**（你评估 C 节）：  
 - Step1：DeepSeek 快速筛 `is_meme: bool + confidence`（batch 处理，成本低）。
-- Step2：confidence > 0.7 才走工具调用（bilibili_search + Google/Bing Search API）。
+- Step2：confidence > 0.7 才走工作流固定搜索步骤（优先火山联网搜索）。
 - Step3：HTTP HEAD 验证 sources[] 真实性（防幻觉）。
 这部分网上没有现成代码，但逻辑简单，1-2 天就能自己实现。
 

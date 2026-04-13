@@ -33,26 +33,6 @@ class MemeRecord(BaseModel):
     updated_at: date = Field(description="最后更新日期")
 
 
-class QuickScreenResult(BaseModel):
-    """Step1 快速筛选的输出模型。"""
-
-    word: str
-    is_meme: bool = Field(description="是否判定为网络梗/亚文化词汇")
-    confidence: float = Field(ge=0.0, le=1.0, description="置信度")
-    candidate_category: str = Field(description="初步分类猜测")
-    reason: str = Field(description="简短理由（1-2句）")
-
-
-class CandidateSeed(BaseModel):
-    """Researcher 基于 Scout 原始评论归纳出的候选词。"""
-
-    word: str = Field(description="候选词或短语")
-    confidence: float = Field(ge=0.0, le=1.0, description="提取置信度")
-    reason: str = Field(description="为何值得进入候选队列")
-    related_bvids: list[str] = Field(default_factory=list, description="相关视频 BV 号")
-    sample_comments: list[str] = Field(default_factory=list, description="代表性评论")
-
-
 class ResearchAcceptedRecord(BaseModel):
     """Research 成功入库后的结果摘要。"""
 
@@ -67,15 +47,12 @@ class ResearchRunResult(BaseModel):
     """Research 流程运行结果。"""
 
     pending_count: int = 0
-    bootstrapped_count: int = 0
-    screened_count: int = 0
-    deep_analysis_count: int = 0
+    adjudicated_count: int = 0
     accepted_count: int = 0
     rejected_count: int = 0
     accepted_records: list[ResearchAcceptedRecord] = Field(default_factory=list)
-    rejected_words: list[str] = Field(default_factory=list)
-    screen_failed_words: list[str] = Field(default_factory=list)
-    failed_words: list[str] = Field(default_factory=list)
+    rejected_bundle_ids: list[str] = Field(default_factory=list)
+    failed_bundle_ids: list[str] = Field(default_factory=list)
     blocked_pending_video_count: int = 0
 
     def __getitem__(self, key: str):

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 
 from meme_detector.api.routes import router
 from meme_detector.archivist.meili_store import ensure_index
@@ -47,13 +47,20 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Legacy /admin/{path} UI has been removed")
 
         @app.get("/workbench", include_in_schema=False)
-        async def legacy_workbench_index() -> RedirectResponse:
-            return RedirectResponse(url="/", status_code=307)
+        async def removed_workbench_index() -> None:
+            raise HTTPException(status_code=404, detail="Legacy /workbench UI has been removed")
 
         @app.get("/workbench/{path:path}", include_in_schema=False)
-        async def legacy_workbench_path(path: str) -> RedirectResponse:
-            normalized = path.lstrip("/")
-            return RedirectResponse(url=f"/{normalized}" if normalized else "/", status_code=307)
+        async def removed_workbench_path(path: str) -> None:
+            raise HTTPException(status_code=404, detail=f"Legacy /workbench/{path} UI has been removed")
+
+        @app.get("/candidates", include_in_schema=False)
+        async def removed_candidates_index() -> None:
+            raise HTTPException(status_code=404, detail="Legacy /candidates UI has been removed")
+
+        @app.get("/candidates/{path:path}", include_in_schema=False)
+        async def removed_candidates_path(path: str) -> None:
+            raise HTTPException(status_code=404, detail=f"Legacy /candidates/{path} UI has been removed")
 
         @app.get("/", include_in_schema=False)
         async def frontend_index() -> FileResponse:
