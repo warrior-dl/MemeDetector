@@ -9,10 +9,11 @@ from meme_detector.archivist.duckdb_store import (
     get_conn,
     get_pending_scout_raw_videos,
     mark_scout_raw_videos_mined,
+    upsert_miner_comment_insights,
     upsert_scout_raw_videos,
 )
 from meme_detector.pipeline_models import MinerBundle
-from meme_detector.miner.scorer import run_miner
+from meme_detector.miner.scorer import run_miner, run_miner_bundles
 
 
 @pytest.mark.asyncio
@@ -238,6 +239,159 @@ def test_upsert_scout_raw_videos_skips_cross_day_duplicate_snapshot(tmp_path, mo
 
     assert rows == [(day_one, "processed")]
     assert pending == []
+
+
+@pytest.mark.asyncio
+async def test_run_miner_bundles_processes_all_pending_insights(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "miner-bundles-unlimited.db")
+    monkeypatch.setattr("meme_detector.archivist.duckdb_store.settings.duckdb_path", db_path)
+
+    target_date = date(2026, 4, 3)
+    conn = get_conn()
+    upsert_miner_comment_insights(
+        conn,
+        [
+            {
+                "insight_id": "insight-bundle-1",
+                "bvid": "BV1BUND001",
+                "collected_date": target_date,
+                "partition": "鬼畜",
+                "title": "第一个视频",
+                "description": "desc1",
+                "video_url": "https://www.bilibili.com/video/BV1BUND001",
+                "tags": ["梗"],
+                "comment_text": "第一条高价值评论",
+                "confidence": 0.91,
+                "is_meme_candidate": True,
+                "is_insider_knowledge": False,
+                "reason": "像梗",
+                "video_context": {"status": "ready"},
+            },
+            {
+                "insight_id": "insight-bundle-2",
+                "bvid": "BV1BUND002",
+                "collected_date": target_date,
+                "partition": "鬼畜",
+                "title": "第二个视频",
+                "description": "desc2",
+                "video_url": "https://www.bilibili.com/video/BV1BUND002",
+                "tags": ["梗"],
+                "comment_text": "第二条高价值评论",
+                "confidence": 0.92,
+                "is_meme_candidate": True,
+                "is_insider_knowledge": False,
+                "reason": "像梗",
+                "video_context": {"status": "ready"},
+            },
+        ],
+    )
+    conn.close()
+
+    def build_bundle(insight: dict) -> MinerBundle:
+        insight_id = str(insight["insight_id"])
+        bvid = str(insight["bvid"])
+        span_id = f"span-{insight_id}"
+        hypothesis_id = f"hyp-{insight_id}"
+        return MinerBundle.model_validate(
+            {
+                "bundle_id": f"bundle-{insight_id}",
+                "insight": {
+                    "insight_id": insight_id,
+                    "bvid": bvid,
+                    "collected_date": insight["collected_date"],
+                    "comment_text": insight["comment_text"],
+                    "worth_investigating": True,
+                    "signal_score": float(insight["confidence"]),
+                    "reason": insight["reason"],
+                    "status": "bundled",
+                },
+                "video_refs": [
+                    {
+                        "bvid": bvid,
+                        "title": insight["title"],
+                        "url": insight["url"],
+                        "partition": insight["partition"],
+                        "collected_date": insight["collected_date"],
+                    }
+                ],
+                "spans": [
+                    {
+                        "span_id": span_id,
+                        "insight_id": insight_id,
+                        "raw_text": insight["comment_text"],
+                        "normalized_text": insight["comment_text"],
+                        "span_type": "template_core",
+                        "char_start": 0,
+                        "char_end": len(insight["comment_text"]),
+                        "confidence": 0.9,
+                        "is_primary": True,
+                        "query_priority": "high",
+                        "reason": "测试主片段。",
+                    }
+                ],
+                "hypotheses": [
+                    {
+                        "hypothesis_id": hypothesis_id,
+                        "insight_id": insight_id,
+                        "candidate_title": insight["comment_text"],
+                        "hypothesis_type": "template_meme",
+                        "miner_opinion": "测试假设。",
+                        "support_score": 0.8,
+                        "counter_score": 0.1,
+                        "uncertainty_score": 0.2,
+                        "suggested_action": "search_then_review",
+                        "status": "queued",
+                    }
+                ],
+                "hypothesis_spans": [
+                    {
+                        "hypothesis_id": hypothesis_id,
+                        "span_id": span_id,
+                        "role": "primary",
+                    }
+                ],
+                "evidences": [],
+                "miner_summary": {
+                    "recommended_hypothesis_id": hypothesis_id,
+                    "should_queue_for_research": True,
+                    "reason": "测试证据包。",
+                },
+            }
+        )
+
+    seen_insights: list[str] = []
+
+    async def fake_build_bundles(video: dict, insights: list[dict]) -> list[MinerBundle]:
+        assert len(insights) == 1
+        seen_insights.append(str(insights[0]["insight_id"]))
+        return [build_bundle(insights[0])]
+
+    monkeypatch.setattr("meme_detector.miner.scorer._build_bundles", fake_build_bundles)
+
+    result = await run_miner_bundles(target_date=target_date)
+
+    conn = get_conn()
+    bundle_1 = get_comment_bundle(conn, bundle_id="bundle-insight-bundle-1")
+    bundle_2 = get_comment_bundle(conn, bundle_id="bundle-insight-bundle-2")
+    statuses = conn.execute(
+        """
+        SELECT insight_id, status
+        FROM miner_comment_insights
+        ORDER BY insight_id
+        """
+    ).fetchall()
+    conn.close()
+
+    assert result.queued_insight_count == 2
+    assert result.bundled_count == 2
+    assert result.failed_insight_count == 0
+    assert seen_insights == ["insight-bundle-2", "insight-bundle-1"]
+    assert bundle_1 is not None
+    assert bundle_2 is not None
+    assert statuses == [
+        ("insight-bundle-1", "bundled"),
+        ("insight-bundle-2", "bundled"),
+    ]
 
 
 @pytest.mark.asyncio

@@ -21,7 +21,7 @@ def list_pending_scout_videos() -> list[dict]:
         return get_pending_scout_raw_videos(conn)
 
 
-def list_queued_bundles(*, limit: int) -> list[dict]:
+def list_queued_bundles(*, limit: int | None = None) -> list[dict]:
     with closing(get_conn()) as conn:
         return list_queued_comment_bundles(conn, limit=limit)
 

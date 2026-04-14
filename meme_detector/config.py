@@ -60,7 +60,6 @@ class Settings(BaseSettings):
     scout_proxy_url: str = ""
 
     # ── AI 参数 ──
-    ai_batch_size: int = 50
     ai_confidence_threshold: float = 0.65
     research_screen_timeout_seconds: float = 60.0
     research_screen_max_retries: int = 1

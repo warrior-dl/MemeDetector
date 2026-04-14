@@ -26,7 +26,7 @@
 ```
 前置条件：不存在待 Miner 处理的视频
     ↓
-读取全部 queued 的 comment bundle（最多 AI_BATCH_SIZE 个）
+读取全部 queued 的 comment bundle
     ↓
 Research LLM 基于 bundle 做 hypothesis 裁决
     ↓

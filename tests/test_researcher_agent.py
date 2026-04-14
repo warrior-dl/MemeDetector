@@ -370,3 +370,131 @@ async def test_run_research_consumes_evidenced_bundle(tmp_path, monkeypatch):
     assert result.pending_count == 1
     assert result.adjudicated_count == 1
     assert result.accepted_count == 1
+
+
+@pytest.mark.asyncio
+async def test_run_research_processes_all_queued_bundles(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        str(tmp_path / "research-unlimited.db"),
+    )
+
+    def build_bundle(index: int) -> MinerBundle:
+        bundle_id = f"bundle_research_unlimited_{index}"
+        insight_id = f"insight_research_unlimited_{index}"
+        span_id = f"span_research_unlimited_{index}"
+        hypothesis_id = f"hyp_research_unlimited_{index}"
+        title = f"测试标题{index}"
+        return MinerBundle.model_validate(
+            {
+                "bundle_id": bundle_id,
+                "insight": {
+                    "insight_id": insight_id,
+                    "bvid": f"BV1UNLIM{index:03d}",
+                    "collected_date": date(2026, 4, 9),
+                    "comment_text": f"测试评论{index}",
+                    "worth_investigating": True,
+                    "signal_score": 0.8,
+                    "reason": "测试队列不限量读取。",
+                    "status": "bundled",
+                },
+                "video_refs": [
+                    {
+                        "bvid": f"BV1UNLIM{index:03d}",
+                        "title": f"测试视频{index}",
+                        "url": f"https://www.bilibili.com/video/BV1UNLIM{index:03d}",
+                        "partition": "动画",
+                        "collected_date": date(2026, 4, 9),
+                    }
+                ],
+                "spans": [
+                    {
+                        "span_id": span_id,
+                        "insight_id": insight_id,
+                        "raw_text": title,
+                        "normalized_text": title,
+                        "span_type": "template_core",
+                        "char_start": 0,
+                        "char_end": len(title),
+                        "confidence": 0.88,
+                        "is_primary": True,
+                        "query_priority": "high",
+                        "reason": "主传播片段。",
+                    }
+                ],
+                "hypotheses": [
+                    {
+                        "hypothesis_id": hypothesis_id,
+                        "insight_id": insight_id,
+                        "candidate_title": title,
+                        "hypothesis_type": "template_meme",
+                        "miner_opinion": "测试假设。",
+                        "support_score": 0.8,
+                        "counter_score": 0.1,
+                        "uncertainty_score": 0.2,
+                        "suggested_action": "search_then_review",
+                        "status": "queued",
+                    }
+                ],
+                "hypothesis_spans": [
+                    {
+                        "hypothesis_id": hypothesis_id,
+                        "span_id": span_id,
+                        "role": "primary",
+                    }
+                ],
+                "evidences": [],
+                "miner_summary": {
+                    "recommended_hypothesis_id": hypothesis_id,
+                    "should_queue_for_research": True,
+                    "reason": "测试证据包。",
+                },
+            }
+        )
+
+    conn = get_conn()
+    upsert_comment_bundle(conn, build_bundle(1))
+    upsert_comment_bundle(conn, build_bundle(2))
+    conn.close()
+
+    seen_bundle_ids: list[str] = []
+
+    async def fake_decide_bundle(bundle, **_kwargs):
+        seen_bundle_ids.append(bundle.bundle_id)
+        return ResearchDecision.model_validate(
+            {
+                "decision_id": f"decision_{bundle.bundle_id}",
+                "bundle_id": bundle.bundle_id,
+                "target_hypothesis_id": bundle.hypotheses[0].hypothesis_id,
+                "decision": "reject",
+                "final_title": "",
+                "target_record_id": "",
+                "confidence": 0.7,
+                "reason": "测试拒绝。",
+                "evidence_summary": {
+                    "support_count": 0,
+                    "counter_count": 1,
+                    "unclear_count": 0,
+                },
+                "assessment": {
+                    "is_core_meme_unit": False,
+                    "is_reusable_expression": False,
+                    "is_entity_reference_only": True,
+                    "needs_human_review": False,
+                    "competing_hypothesis_exists": False,
+                },
+                "record": None,
+            }
+        )
+
+    monkeypatch.setattr("meme_detector.researcher.agent._decide_bundle", fake_decide_bundle)
+
+    result = await run_research()
+
+    assert result.pending_count == 2
+    assert result.adjudicated_count == 2
+    assert result.rejected_count == 2
+    assert seen_bundle_ids == [
+        "bundle_research_unlimited_1",
+        "bundle_research_unlimited_2",
+    ]

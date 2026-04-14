@@ -180,7 +180,7 @@ async def run_miner_bundles(target_date: date | None = None) -> MinerBundlesRunR
         extra={"event": "miner_bundles_started", "target_date": today.isoformat()},
     )
 
-    pending_insights = _list_pending_bundle_insights(limit=settings.ai_batch_size * 20)
+    pending_insights = _list_pending_bundle_insights()
     if not pending_insights:
         update_job_runtime_progress(
             "miner_bundles",

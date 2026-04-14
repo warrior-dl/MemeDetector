@@ -1135,10 +1135,9 @@ def upsert_miner_comment_insights(
 def get_pending_miner_comment_insights(
     conn: duckdb.DuckDBPyConnection,
     *,
-    limit: int = 200,
+    limit: int | None = 200,
 ) -> list[dict]:
-    rows = conn.execute(
-        """
+    query = """
         SELECT
             insight_id,
             bvid,
@@ -1160,10 +1159,13 @@ def get_pending_miner_comment_insights(
         FROM miner_comment_insights
         WHERE status IN ('pending_bundle', 'bundle_failed')
         ORDER BY confidence DESC, collected_date ASC, bvid ASC
-        LIMIT ?
-        """,
-        [limit],
-    ).fetchall()
+    """
+    params: list[int] = []
+    if limit is not None:
+        query += "\n        LIMIT ?"
+        params.append(limit)
+
+    rows = conn.execute(query, params).fetchall()
     return [
         {
             "insight_id": row[0],
@@ -1824,6 +1826,45 @@ def get_comment_bundle(
         )
         for item in link_rows
     ]
+    if hypotheses and spans:
+        primary_hypothesis_ids = {
+            item.hypothesis_id
+            for item in hypothesis_spans
+            if item.role.value == "primary"
+        }
+        linked_span_ids_by_hypothesis: dict[str, list[str]] = {}
+        for item in hypothesis_spans:
+            linked_span_ids_by_hypothesis.setdefault(item.hypothesis_id, []).append(item.span_id)
+
+        primary_span_ids = [item.span_id for item in spans if item.is_primary]
+        fallback_default_span_id = primary_span_ids[0] if primary_span_ids else spans[0].span_id
+        missing_primary_hypothesis_ids: list[str] = []
+
+        for hypothesis in hypotheses:
+            if hypothesis.hypothesis_id in primary_hypothesis_ids:
+                continue
+
+            fallback_span_id = (
+                linked_span_ids_by_hypothesis.get(hypothesis.hypothesis_id, [fallback_default_span_id])[0]
+            )
+            hypothesis_spans.append(
+                HypothesisSpanLink(
+                    hypothesis_id=hypothesis.hypothesis_id,
+                    span_id=fallback_span_id,
+                    role="primary",
+                )
+            )
+            missing_primary_hypothesis_ids.append(hypothesis.hypothesis_id)
+
+        if missing_primary_hypothesis_ids:
+            logger.warning(
+                "comment bundle missing primary span links; reconstructed on read",
+                extra={
+                    "event": "comment_bundle_primary_span_reconstructed",
+                    "bundle_id": resolved_bundle_id,
+                    "hypothesis_ids": missing_primary_hypothesis_ids,
+                },
+            )
     evidences = [
         Evidence(
             evidence_id=str(item[0]).strip(),
@@ -1995,11 +2036,10 @@ def get_research_decision(
 def list_queued_comment_bundles(
     conn: duckdb.DuckDBPyConnection,
     *,
-    limit: int = 50,
+    limit: int | None = 50,
 ) -> list[dict]:
     """列出待 Research 裁决的评论证据包。"""
-    rows = conn.execute(
-        """
+    query = """
         SELECT
             ci.bundle_id,
             ci.insight_id,
@@ -2022,10 +2062,13 @@ def list_queued_comment_bundles(
             ci.signal_score,
             ci.status
         ORDER BY ci.collected_date ASC, ci.signal_score DESC, ci.bundle_id ASC
-        LIMIT ?
-        """,
-        [limit],
-    ).fetchall()
+    """
+    params: list[int] = []
+    if limit is not None:
+        query += "\n        LIMIT ?"
+        params.append(limit)
+
+    rows = conn.execute(query, params).fetchall()
     return [
         {
             "bundle_id": row[0],

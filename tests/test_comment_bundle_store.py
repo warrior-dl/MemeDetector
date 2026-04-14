@@ -2,6 +2,7 @@ from datetime import date
 
 from meme_detector.archivist.duckdb_store import (
     get_comment_bundle,
+    get_comment_bundle_detail,
     get_conn,
     get_research_decision,
     upsert_comment_bundle,
@@ -194,3 +195,28 @@ def test_comment_bundle_round_trip_and_research_decision(tmp_path, monkeypatch):
     assert hypothesis_row == ("accepted",)
     assert insight_row == ("researched",)
     assert meme_row == ("闭嘴，如果你惹怒了我……",)
+
+
+def test_get_comment_bundle_reconstructs_missing_primary_span_link(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        str(tmp_path / "bundle-legacy.db"),
+    )
+
+    conn = get_conn()
+    upsert_comment_bundle(conn, _build_bundle())
+    conn.execute("DELETE FROM hypothesis_spans WHERE hypothesis_id = ?", ["hyp_1"])
+
+    stored_bundle = get_comment_bundle(conn, bundle_id="bundle_001")
+    detail = get_comment_bundle_detail(conn, "bundle_001")
+    conn.close()
+
+    assert stored_bundle is not None
+    primary_links = [
+        item for item in stored_bundle.hypothesis_spans
+        if item.hypothesis_id == "hyp_1" and item.role.value == "primary"
+    ]
+    assert len(primary_links) == 1
+    assert primary_links[0].span_id == "span_1"
+    assert detail is not None
+    assert detail["bundle"]["bundle_id"] == "bundle_001"

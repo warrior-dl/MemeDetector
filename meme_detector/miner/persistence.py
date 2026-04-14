@@ -32,7 +32,7 @@ def recover_processing_videos() -> int:
         return recover_stale_miner_processing_videos(conn)
 
 
-def list_pending_bundle_insights(*, limit: int = 200) -> list[dict]:
+def list_pending_bundle_insights(*, limit: int | None = None) -> list[dict]:
     with closing(get_conn()) as conn:
         return get_pending_miner_comment_insights(conn, limit=limit)
 

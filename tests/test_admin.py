@@ -671,3 +671,87 @@ def test_jobs_run_endpoint(client, monkeypatch):
     assert payload["started"] is True
     assert payload["job_name"] == "miner"
     assert called == {"job_name": "miner", "trigger_mode": "manual"}
+
+
+def test_research_bundle_detail_allows_legacy_bundle_without_primary_span_link(client):
+    conn = get_conn()
+    upsert_comment_bundle(
+        conn,
+        {
+            "bundle_id": "bundle-legacy",
+            "insight": {
+                "insight_id": "bundle-legacy-insight",
+                "bvid": "BV1LEGACY01",
+                "collected_date": date(2026, 3, 28),
+                "comment_text": "这也太抽象了",
+                "worth_investigating": True,
+                "signal_score": 0.88,
+                "reason": "旧数据缺少 primary link。",
+                "status": "bundled",
+            },
+            "video_refs": [
+                {
+                    "bvid": "BV1LEGACY01",
+                    "title": "旧证据包测试视频",
+                    "url": "https://www.bilibili.com/video/BV1LEGACY01",
+                    "partition": "动画",
+                    "collected_date": date(2026, 3, 28),
+                }
+            ],
+            "spans": [
+                {
+                    "span_id": "legacy-span-1",
+                    "insight_id": "bundle-legacy-insight",
+                    "raw_text": "太抽象了",
+                    "normalized_text": "太抽象了",
+                    "span_type": "template_core",
+                    "char_start": 2,
+                    "char_end": 6,
+                    "confidence": 0.9,
+                    "is_primary": True,
+                    "query_priority": "high",
+                    "reason": "主模板句。",
+                }
+            ],
+            "hypotheses": [
+                {
+                    "hypothesis_id": "legacy-hyp-1",
+                    "insight_id": "bundle-legacy-insight",
+                    "candidate_title": "太抽象了",
+                    "hypothesis_type": "template_meme",
+                    "miner_opinion": "主模板句就是传播核心。",
+                    "support_score": 0.8,
+                    "counter_score": 0.1,
+                    "uncertainty_score": 0.2,
+                    "suggested_action": "search_then_review",
+                    "status": "queued",
+                }
+            ],
+            "hypothesis_spans": [
+                {
+                    "hypothesis_id": "legacy-hyp-1",
+                    "span_id": "legacy-span-1",
+                    "role": "primary",
+                }
+            ],
+            "evidences": [],
+            "miner_summary": {
+                "recommended_hypothesis_id": "legacy-hyp-1",
+                "should_queue_for_research": True,
+                "reason": "旧 bundle 兼容读取。",
+            },
+        },
+    )
+    conn.execute("DELETE FROM hypothesis_spans WHERE hypothesis_id = ?", ["legacy-hyp-1"])
+    conn.close()
+
+    response = client.get("/api/v1/research/bundles/bundle-legacy")
+
+    assert response.status_code == 200
+    payload = response.json()
+    primary_links = [
+        item for item in payload["bundle"]["hypothesis_spans"]
+        if item["hypothesis_id"] == "legacy-hyp-1" and item["role"] == "primary"
+    ]
+    assert len(primary_links) == 1
+    assert primary_links[0]["span_id"] == "legacy-span-1"

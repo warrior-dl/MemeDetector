@@ -43,7 +43,7 @@ async def run_research() -> ResearchRunResult:
         message="正在载入待裁决证据包",
     )
 
-    queued_bundles = _list_queued_bundles(limit=settings.ai_batch_size)
+    queued_bundles = _list_queued_bundles()
     result = ResearchRunResult(pending_count=len(queued_bundles))
     update_job_runtime_progress(
         "research",
