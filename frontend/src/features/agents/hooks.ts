@@ -4,6 +4,7 @@ import type {
   AgentConversationDetail,
   AgentConversationListParams,
   AgentConversationListResponse,
+  AgentTraceDetail,
 } from "../../data/types";
 
 export function useAgentConversations(params: AgentConversationListParams = {}) {
@@ -23,6 +24,12 @@ export function useAgentConversations(params: AgentConversationListParams = {}) 
       if (params.word) {
         searchParams.set("word", params.word);
       }
+      if (params.entityType) {
+        searchParams.set("entity_type", params.entityType);
+      }
+      if (params.entityId) {
+        searchParams.set("entity_id", params.entityId);
+      }
       if (params.status) {
         searchParams.set("status", params.status);
       }
@@ -39,6 +46,17 @@ export function useAgentConversation(conversationId?: string) {
     queryFn: () =>
       fetchJson<AgentConversationDetail>(
         `/api/v1/agent-conversations/${encodeURIComponent(conversationId ?? "")}`,
+      ),
+    enabled: Boolean(conversationId),
+  });
+}
+
+export function useAgentConversationTrace(conversationId?: string) {
+  return useQuery({
+    queryKey: ["agent-conversation-trace", conversationId],
+    queryFn: () =>
+      fetchJson<AgentTraceDetail>(
+        `/api/v1/agent-conversations/${encodeURIComponent(conversationId ?? "")}/trace`,
       ),
     enabled: Boolean(conversationId),
   });

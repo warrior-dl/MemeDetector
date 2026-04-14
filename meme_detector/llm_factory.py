@@ -10,6 +10,7 @@ from pydantic_ai.providers.deepseek import DeepSeekProvider
 from pydantic_ai.providers.moonshotai import MoonshotAIProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
+from meme_detector.agent_tracing import resolve_async_openai_client_cls
 from meme_detector.config import settings
 from meme_detector.logging_utils import get_logger
 
@@ -59,6 +60,7 @@ def build_async_openai_client(
     client_cls: type[AsyncOpenAI] = AsyncOpenAI,
 ) -> AsyncOpenAI:
     config = resolve_llm_config(target)
+    effective_client_cls = resolve_async_openai_client_cls(client_cls)
     kwargs: dict = {
         "api_key": config.api_key,
         "base_url": config.base_url,
@@ -67,7 +69,7 @@ def build_async_openai_client(
         kwargs["timeout"] = timeout
     if max_retries is not None:
         kwargs["max_retries"] = max(max_retries, 0)
-    return client_cls(**kwargs)
+    return effective_client_cls(**kwargs)
 
 
 def build_openai_chat_model(
@@ -237,6 +239,50 @@ def load_json_response(raw: str) -> Any:
         return value
 
     return json.loads(text)
+
+
+async def request_json_chat_completion_detailed(
+    *,
+    client: AsyncOpenAI,
+    model_name: str,
+    messages: list[dict[str, str]],
+) -> dict[str, Any]:
+    use_structured_output = _STRUCTURED_OUTPUT_SUPPORT_CACHE.get(model_name, True)
+    if use_structured_output:
+        try:
+            resp = await client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                response_format={"type": "json_object"},
+            )
+            _STRUCTURED_OUTPUT_SUPPORT_CACHE[model_name] = True
+        except BadRequestError as exc:
+            if not should_fallback_from_response_format(exc):
+                raise
+            _STRUCTURED_OUTPUT_SUPPORT_CACHE[model_name] = False
+            resp = await client.chat.completions.create(
+                model=model_name,
+                messages=build_prompt_only_json_messages(messages),
+            )
+    else:
+        resp = await client.chat.completions.create(
+            model=model_name,
+            messages=build_prompt_only_json_messages(messages),
+        )
+
+    content = resp.choices[0].message.content or "{}"
+    usage = getattr(resp, "usage", None)
+    usage_payload = {
+        "prompt_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
+        "completion_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
+        "total_tokens": getattr(usage, "total_tokens", 0) if usage else 0,
+    }
+    usage_payload["input_tokens"] = usage_payload["prompt_tokens"]
+    usage_payload["output_tokens"] = usage_payload["completion_tokens"]
+    return {
+        "content": content,
+        "usage": usage_payload,
+    }
 
 
 def _strip_markdown_code_fence(text: str) -> str:

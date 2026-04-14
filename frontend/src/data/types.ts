@@ -152,11 +152,15 @@ export interface AgentConversationSummary {
   run_id: string;
   agent_name: string;
   word: string;
+  entity_type?: string;
+  entity_id?: string;
   status: string;
   summary?: string;
   started_at?: string;
   finished_at?: string;
   message_count?: number;
+  langfuse_trace_id?: string;
+  langfuse_public_url?: string;
   error_message?: string;
 }
 
@@ -170,15 +174,49 @@ export interface AgentConversationListResponse {
 export interface AgentConversationDetail extends AgentConversationSummary {
   messages: unknown[];
   output: unknown;
+  public_timeline?: unknown[];
+  raw_timeline?: unknown[];
+  input_summary?: unknown;
+  token_usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+  };
 }
 
 export interface AgentConversationListParams {
   runId?: string;
   agentName?: string;
   word?: string;
+  entityType?: string;
+  entityId?: string;
   status?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface AgentTraceStep {
+  id: string;
+  parent_event_id?: string | null;
+  step_index: number;
+  event_type: string;
+  stage: string;
+  title: string;
+  status: string;
+  started_at?: string;
+  finished_at?: string;
+  duration_ms?: number;
+  summary?: string;
+  input?: unknown;
+  output?: unknown;
+  metadata?: Record<string, unknown>;
+  is_user_visible?: boolean;
+  langfuse_observation_id?: string;
+}
+
+export interface AgentTraceDetail {
+  conversation: AgentConversationDetail;
+  steps: AgentTraceStep[];
 }
 
 export interface MemeItem {

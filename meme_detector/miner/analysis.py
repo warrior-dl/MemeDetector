@@ -6,19 +6,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 
 from openai import AsyncOpenAI
 
+from meme_detector.agent_tracing import TraceTimelineBuilder, start_langfuse_trace
 from meme_detector.archivist.duckdb_store import (
     create_agent_conversation,
     finish_agent_conversation,
     get_conn,
+    replace_agent_trace_events,
 )
 from meme_detector.config import settings
 from meme_detector.llm_factory import (
     build_async_openai_client,
     load_json_response,
-    request_json_chat_completion,
+    request_json_chat_completion_detailed,
     resolve_llm_config,
 )
 from meme_detector.logging_utils import get_logger
@@ -60,192 +63,293 @@ _MINER_SYSTEM = """\
 async def score_video_comments(video: dict, comments: list[str]) -> list[dict]:
     conversation_id = create_miner_conversation(video)
     conversation_messages: list[dict] = []
-    context = await get_bilibili_video_context(str(video.get("bvid", "")).strip())
-    client = build_async_openai_client(
-        "miner",
-        timeout=settings.miner_llm_timeout_seconds,
-        max_retries=settings.miner_llm_max_retries,
-        client_cls=AsyncOpenAI,
-    )
+    bvid = str(video.get("bvid", "")).strip()
     llm_config = resolve_llm_config("miner")
-
-    chunks = [
-        comments[i : i + settings.miner_comments_batch_size]
-        for i in range(0, len(comments), settings.miner_comments_batch_size)
-    ]
-    logger.info(
-        "miner video analysis prepared",
-        extra={
-            "event": "miner_video_analysis_prepared",
-            "bvid": str(video.get("bvid", "")).strip(),
-            "comment_count": len(comments),
-            "chunk_count": len(chunks),
-            "model_name": llm_config.model,
-            "provider": llm_config.provider,
-            "status": context.get("status", ""),
-            "conversation_id": conversation_id,
-        },
+    trace = TraceTimelineBuilder(
+        conversation_id=conversation_id or "",
+        run_id=get_current_run_id() or "",
+        agent_name="miner",
+        entity_type="video",
+        entity_id=bvid,
     )
-    all_results: list[dict] = []
-    try:
-        for chunk_index, chunk in enumerate(chunks):
-            offset = chunk_index * settings.miner_comments_batch_size
-            fallback_reason = "模型未返回有效结果"
-            user_msg = build_miner_prompt(video, context, chunk)
-            logger.info(
-                "miner comment chunk started",
-                extra={
-                    "event": "miner_chunk_started",
-                    "bvid": str(video.get("bvid", "")).strip(),
-                    "chunk_index": chunk_index,
-                    "comment_count": len(chunk),
-                },
-            )
-            conversation_messages.extend(
-                [
-                    {
-                        "role": "system",
-                        "chunk_index": chunk_index,
-                        "content": truncate_text(_MINER_SYSTEM, 3000),
-                    },
-                    {
-                        "role": "user",
-                        "chunk_index": chunk_index,
-                        "content": truncate_text(user_msg, 12000),
-                    },
-                ]
-            )
-            try:
-                raw = await request_chunk_comment_scores(
-                    client=client,
-                    user_msg=user_msg,
-                    model_name=llm_config.model,
-                )
-                conversation_messages.append(
-                    {
-                        "role": "assistant",
-                        "chunk_index": chunk_index,
-                        "content": truncate_text(raw, 12000),
-                    }
-                )
-                items = extract_chunk_items(raw)
-                logger.info(
-                    "miner comment chunk response received",
-                    extra={
-                        "event": "miner_chunk_response_received",
-                        "bvid": str(video.get("bvid", "")).strip(),
-                        "chunk_index": chunk_index,
-                        "result_count": len(items),
-                    },
-                )
-            except Exception as exc:
-                fallback_reason = format_chunk_failure_reason(exc)
-                logger.warning(
-                    "miner comment chunk analysis failed",
-                    extra={
-                        "event": "miner_chunk_failed",
-                        "bvid": str(video.get("bvid", "")).strip(),
-                        "chunk_index": chunk_index,
-                    },
-                    exc_info=exc,
-                )
-                conversation_messages.append(
-                    {
-                        "role": "assistant",
-                        "chunk_index": chunk_index,
-                        "error": summarize_exception(exc),
-                    }
-                )
-                items = []
-
-            parsed_by_index: dict[int, CommentInsightResult] = {}
-            for item in items:
-                try:
-                    parsed = CommentInsightResult(**item)
-                except Exception:
-                    continue
-                parsed_by_index[parsed.index] = parsed
-
-            for local_index, comment_text in enumerate(chunk):
-                parsed = parsed_by_index.get(local_index)
-                if parsed is None:
-                    parsed = CommentInsightResult(
-                        index=local_index,
-                        is_meme_candidate=False,
-                        is_insider_knowledge=False,
-                        confidence=0.0,
-                        reason=fallback_reason,
-                    )
-                all_results.append(
-                    materialize_insight_record(
-                        video=video,
-                        context=context,
-                        comment_text=comment_text,
-                        parsed=parsed,
-                        global_index=offset + local_index,
-                    )
-                )
-            chunk_results = all_results[offset : offset + len(chunk)]
-            chunk_high_value_count = sum(
-                1
-                for item in chunk_results
-                if item.get("confidence", 0.0) >= settings.miner_comment_confidence_threshold
-                and (item.get("is_meme_candidate") or item.get("is_insider_knowledge"))
-            )
-            logger.info(
-                "miner comment chunk completed",
-                extra={
-                    "event": "miner_chunk_completed",
-                    "bvid": str(video.get("bvid", "")).strip(),
-                    "chunk_index": chunk_index,
-                    "comment_count": len(chunk_results),
-                    "high_value_count": chunk_high_value_count,
-                },
-            )
-    except Exception as exc:
-        logger.exception(
-            "miner video analysis failed",
+    with start_langfuse_trace(
+        name=f"miner:{bvid or 'unknown-video'}",
+        session_id=get_current_run_id(),
+        metadata={
+            "agent_name": "miner",
+            "conversation_id": conversation_id or "",
+            "bvid": bvid,
+            "model": llm_config.model,
+            "provider": llm_config.provider,
+        },
+    ) as langfuse_trace:
+        context_started_at = datetime.now()
+        context = await get_bilibili_video_context(bvid)
+        trace.add_step(
+            event_type="input",
+            stage="prepare",
+            title="加载视频上下文",
+            status="success",
+            summary=f"上下文状态：{str(context.get('status', '')).strip() or 'unknown'}",
+            input_data={"bvid": bvid},
+            output_data={"status": context.get("status", ""), "title": video.get("title", "")},
+            started_at=context_started_at,
+            finished_at=datetime.now(),
+        )
+        client = build_async_openai_client(
+            "miner",
+            timeout=settings.miner_llm_timeout_seconds,
+            max_retries=settings.miner_llm_max_retries,
+            client_cls=AsyncOpenAI,
+        )
+        chunks = [
+            comments[i : i + settings.miner_comments_batch_size]
+            for i in range(0, len(comments), settings.miner_comments_batch_size)
+        ]
+        trace.add_step(
+            event_type="input",
+            stage="prepare",
+            title="切分评论批次",
+            status="success",
+            summary=f"共 {len(comments)} 条评论，切分为 {len(chunks)} 个批次",
+            output_data={"comment_count": len(comments), "chunk_count": len(chunks)},
+        )
+        logger.info(
+            "miner video analysis prepared",
             extra={
-                "event": "miner_video_analysis_failed",
-                "bvid": str(video.get("bvid", "")).strip(),
+                "event": "miner_video_analysis_prepared",
+                "bvid": bvid,
+                "comment_count": len(comments),
+                "chunk_count": len(chunks),
+                "model_name": llm_config.model,
+                "provider": llm_config.provider,
+                "status": context.get("status", ""),
                 "conversation_id": conversation_id,
             },
         )
+        all_results: list[dict] = []
+        try:
+            for chunk_index, chunk in enumerate(chunks):
+                offset = chunk_index * settings.miner_comments_batch_size
+                fallback_reason = "模型未返回有效结果"
+                user_msg = build_miner_prompt(video, context, chunk)
+                chunk_started_at = datetime.now()
+                logger.info(
+                    "miner comment chunk started",
+                    extra={
+                        "event": "miner_chunk_started",
+                        "bvid": bvid,
+                        "chunk_index": chunk_index,
+                        "comment_count": len(chunk),
+                    },
+                )
+                conversation_messages.extend(
+                    [
+                        {
+                            "role": "system",
+                            "chunk_index": chunk_index,
+                            "content": truncate_text(_MINER_SYSTEM, 3000),
+                        },
+                        {
+                            "role": "user",
+                            "chunk_index": chunk_index,
+                            "content": truncate_text(user_msg, 12000),
+                        },
+                    ]
+                )
+                try:
+                    llm_response = await request_chunk_comment_scores(
+                        client=client,
+                        user_msg=user_msg,
+                        model_name=llm_config.model,
+                    )
+                    raw = llm_response["content"]
+                    trace.add_llm_usage(llm_response.get("usage"))
+                    conversation_messages.append(
+                        {
+                            "role": "assistant",
+                            "chunk_index": chunk_index,
+                            "content": truncate_text(raw, 12000),
+                        }
+                    )
+                    items = extract_chunk_items(raw)
+                    logger.info(
+                        "miner comment chunk response received",
+                        extra={
+                            "event": "miner_chunk_response_received",
+                            "bvid": bvid,
+                            "chunk_index": chunk_index,
+                            "result_count": len(items),
+                        },
+                    )
+                    trace.add_step(
+                        event_type="llm_generation",
+                        stage="reason",
+                        title=f"评论批次判定 #{chunk_index + 1}",
+                        status="success",
+                        summary=f"返回 {len(items)} 条结构化结果",
+                        input_data={
+                            "chunk_index": chunk_index,
+                            "comment_count": len(chunk),
+                            "messages": conversation_messages[-3:],
+                        },
+                        output_data={
+                            "raw": truncate_text(raw, 2000),
+                            "result_count": len(items),
+                        },
+                        metadata={
+                            "model": llm_config.model,
+                            "provider": llm_config.provider,
+                            "usage": llm_response.get("usage", {}),
+                        },
+                        started_at=chunk_started_at,
+                        finished_at=datetime.now(),
+                    )
+                except Exception as exc:
+                    fallback_reason = format_chunk_failure_reason(exc)
+                    logger.warning(
+                        "miner comment chunk analysis failed",
+                        extra={
+                            "event": "miner_chunk_failed",
+                            "bvid": bvid,
+                            "chunk_index": chunk_index,
+                        },
+                        exc_info=exc,
+                    )
+                    conversation_messages.append(
+                        {
+                            "role": "assistant",
+                            "chunk_index": chunk_index,
+                            "error": summarize_exception(exc),
+                        }
+                    )
+                    trace.add_step(
+                        event_type="llm_generation",
+                        stage="reason",
+                        title=f"评论批次判定 #{chunk_index + 1}",
+                        status="failed",
+                        summary=summarize_exception(exc),
+                        input_data={
+                            "chunk_index": chunk_index,
+                            "comment_count": len(chunk),
+                        },
+                        output_data={"error": summarize_exception(exc)},
+                        metadata={"model": llm_config.model, "provider": llm_config.provider},
+                        started_at=chunk_started_at,
+                        finished_at=datetime.now(),
+                    )
+                    items = []
+
+                parsed_by_index: dict[int, CommentInsightResult] = {}
+                for item in items:
+                    try:
+                        parsed = CommentInsightResult(**item)
+                    except Exception:
+                        continue
+                    parsed_by_index[parsed.index] = parsed
+
+                for local_index, comment_text in enumerate(chunk):
+                    parsed = parsed_by_index.get(local_index)
+                    if parsed is None:
+                        parsed = CommentInsightResult(
+                            index=local_index,
+                            is_meme_candidate=False,
+                            is_insider_knowledge=False,
+                            confidence=0.0,
+                            reason=fallback_reason,
+                        )
+                    all_results.append(
+                        materialize_insight_record(
+                            video=video,
+                            context=context,
+                            comment_text=comment_text,
+                            parsed=parsed,
+                            global_index=offset + local_index,
+                        )
+                    )
+                chunk_results = all_results[offset : offset + len(chunk)]
+                chunk_high_value_count = sum(
+                    1
+                    for item in chunk_results
+                    if item.get("confidence", 0.0) >= settings.miner_comment_confidence_threshold
+                    and (item.get("is_meme_candidate") or item.get("is_insider_knowledge"))
+                )
+                logger.info(
+                    "miner comment chunk completed",
+                    extra={
+                        "event": "miner_chunk_completed",
+                        "bvid": bvid,
+                        "chunk_index": chunk_index,
+                        "comment_count": len(chunk_results),
+                        "high_value_count": chunk_high_value_count,
+                    },
+                )
+        except Exception as exc:
+            logger.exception(
+                "miner video analysis failed",
+                extra={
+                    "event": "miner_video_analysis_failed",
+                    "bvid": bvid,
+                    "conversation_id": conversation_id,
+                },
+            )
+            trace.add_step(
+                event_type="error",
+                stage="finalize",
+                title="视频评论初筛失败",
+                status="failed",
+                summary=str(exc),
+                output_data={"error": str(exc)},
+            )
+            persist_miner_conversation(
+                conversation_id=conversation_id,
+                status="failed",
+                video=video,
+                comments=comments,
+                results=all_results,
+                conversation_messages=conversation_messages,
+                trace=trace,
+                langfuse_trace_id=langfuse_trace.trace_id,
+                langfuse_public_url=langfuse_trace.trace_url,
+                error_message=str(exc),
+            )
+            raise
+
+        trace.add_step(
+            event_type="persist",
+            stage="finalize",
+            title="写入评论线索结果",
+            status="success",
+            summary=f"共写入 {len(all_results)} 条结果",
+            output_data={"result_count": len(all_results)},
+        )
         persist_miner_conversation(
             conversation_id=conversation_id,
-            status="failed",
+            status="success",
             video=video,
             comments=comments,
             results=all_results,
             conversation_messages=conversation_messages,
-            error_message=str(exc),
+            trace=trace,
+            langfuse_trace_id=langfuse_trace.trace_id,
+            langfuse_public_url=langfuse_trace.trace_url,
         )
-        raise
-
-    persist_miner_conversation(
-        conversation_id=conversation_id,
-        status="success",
-        video=video,
-        comments=comments,
-        results=all_results,
-        conversation_messages=conversation_messages,
-    )
-    logger.info(
-        "miner video analysis completed",
-        extra={
-            "event": "miner_video_analysis_completed",
-            "bvid": str(video.get("bvid", "")).strip(),
-            "result_count": len(all_results),
-            "high_value_count": sum(
-                1
-                for item in all_results
-                if item.get("confidence", 0.0) >= settings.miner_comment_confidence_threshold
-                and (item.get("is_meme_candidate") or item.get("is_insider_knowledge"))
-            ),
-            "conversation_id": conversation_id,
-        },
-    )
-    return all_results
+        logger.info(
+            "miner video analysis completed",
+            extra={
+                "event": "miner_video_analysis_completed",
+                "bvid": bvid,
+                "result_count": len(all_results),
+                "high_value_count": sum(
+                    1
+                    for item in all_results
+                    if item.get("confidence", 0.0) >= settings.miner_comment_confidence_threshold
+                    and (item.get("is_meme_candidate") or item.get("is_insider_knowledge"))
+                ),
+                "conversation_id": conversation_id,
+            },
+        )
+        return all_results
 
 
 async def request_chunk_comment_scores(
@@ -253,8 +357,8 @@ async def request_chunk_comment_scores(
     client: AsyncOpenAI,
     user_msg: str,
     model_name: str,
-) -> str:
-    return await request_json_chat_completion(
+) -> dict:
+    return await request_json_chat_completion_detailed(
         client=client,
         model_name=model_name,
         messages=[
@@ -295,6 +399,9 @@ def create_miner_conversation(video: dict) -> str | None:
             run_id=run_id,
             agent_name="miner",
             word=str(video.get("bvid", "")).strip() or str(video.get("title", "")).strip() or "UNKNOWN",
+            entity_type="video",
+            entity_id=str(video.get("bvid", "")).strip(),
+            langfuse_session_id=run_id,
         )
     finally:
         conn.close()
@@ -308,6 +415,9 @@ def persist_miner_conversation(
     comments: list[str],
     results: list[dict],
     conversation_messages: list[dict],
+    trace: TraceTimelineBuilder,
+    langfuse_trace_id: str = "",
+    langfuse_public_url: str = "",
     error_message: str = "",
 ) -> None:
     if not conversation_id:
@@ -332,6 +442,15 @@ def persist_miner_conversation(
     }
     conn = get_conn()
     try:
+        replace_agent_trace_events(
+            conn,
+            conversation_id=conversation_id,
+            run_id=trace.run_id,
+            agent_name=trace.agent_name,
+            entity_type=trace.entity_type,
+            entity_id=trace.entity_id,
+            events=trace.all_steps(),
+        )
         finish_agent_conversation(
             conn,
             conversation_id,
@@ -340,6 +459,16 @@ def persist_miner_conversation(
             messages_json=json.dumps(conversation_messages, ensure_ascii=False),
             message_count=len(conversation_messages),
             output_json=json.dumps(output, ensure_ascii=False, default=str),
+            public_timeline_json=json.dumps(trace.public_steps(), ensure_ascii=False, default=str),
+            raw_timeline_json=json.dumps(trace.all_steps(), ensure_ascii=False, default=str),
+            input_summary_json=json.dumps(
+                {"bvid": output["bvid"], "comment_count": len(comments)},
+                ensure_ascii=False,
+                default=str,
+            ),
+            token_usage_json=json.dumps(trace.token_usage(), ensure_ascii=False, default=str),
+            langfuse_trace_id=langfuse_trace_id,
+            langfuse_public_url=langfuse_public_url,
             error_message=error_message,
         )
     finally:

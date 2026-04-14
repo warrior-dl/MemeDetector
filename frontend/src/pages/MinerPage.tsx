@@ -1,6 +1,7 @@
 import {
   Alert,
   Checkbox,
+  Collapse,
   Col,
   Descriptions,
   Empty,
@@ -16,12 +17,17 @@ import {
   Typography,
 } from "antd";
 import { useDeferredValue, useEffect, useState } from "react";
-import { useAgentConversation, useAgentConversations } from "../features/agents/hooks";
+import {
+  useAgentConversation,
+  useAgentConversationTrace,
+  useAgentConversations,
+} from "../features/agents/hooks";
 import {
   useMinerCommentInsightDetail,
   useMinerCommentInsightsPage,
 } from "../features/miner/hooks";
 import { JsonPanel } from "../ui/JsonPanel";
+import { AgentTracePanel } from "../ui/AgentTracePanel";
 import { PageSection } from "../ui/PageSection";
 import { ConversationStatusTag, MinerInsightStatusTag } from "../ui/StatusTags";
 import { formatDateTime, shortId } from "../utils/format";
@@ -95,6 +101,7 @@ export function MinerPage() {
   }, [conversationItems, selectedConversationId]);
 
   const conversationDetailQuery = useAgentConversation(selectedConversationId);
+  const conversationTraceQuery = useAgentConversationTrace(selectedConversationId);
   const videoContext = selectedInsight?.video_context ?? {};
 
   return (
@@ -468,8 +475,25 @@ export function MinerPage() {
                                 description={conversationDetailQuery.data.error_message}
                               />
                             ) : null}
-                            <JsonPanel title="最终输出" value={conversationDetailQuery.data.output} />
-                            <JsonPanel title="完整消息" value={conversationDetailQuery.data.messages} />
+                            <AgentTracePanel
+                              trace={conversationTraceQuery.data}
+                              emptyText="这条 Miner 对话还没有 Trace"
+                            />
+                            <Collapse
+                              size="small"
+                              items={[
+                                {
+                                  key: "raw",
+                                  label: "查看原始对话 JSON",
+                                  children: (
+                                    <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                                      <JsonPanel title="最终输出" value={conversationDetailQuery.data.output} />
+                                      <JsonPanel title="完整消息" value={conversationDetailQuery.data.messages} />
+                                    </Space>
+                                  ),
+                                },
+                              ]}
+                            />
                           </Space>
                         )}
                       </Col>

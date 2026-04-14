@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 
 from meme_detector.archivist.duckdb_store import (
     get_agent_conversation,
+    get_agent_conversation_trace,
     get_comment_bundle_detail,
     get_comment_bundles_page,
     get_conn,
@@ -78,10 +79,11 @@ async def list_memes(
 @router.get("/memes/search", summary="全文检索梗")
 async def full_text_search(
     q: str = Query(..., description="搜索关键词"),
+    sort_by: str = Query("updated_at:desc", description="排序字段"),
     limit: int = Query(10, ge=1, le=50),
     offset: int = Query(0, ge=0),
 ) -> dict:
-    return await search_memes(q, limit=limit, offset=offset)
+    return await search_memes(q, sort=[sort_by], limit=limit, offset=offset)
 
 
 @router.get("/memes/{meme_id}", summary="获取单个梗详情")
@@ -319,6 +321,8 @@ async def list_conversations(
     run_id: str | None = Query(None, description="关联的运行记录 ID"),
     agent_name: str | None = Query(None, description="Agent 名称：miner / researcher"),
     word: str | None = Query(None, description="词条关键字过滤"),
+    entity_type: str | None = Query(None, description="实体类型：video / bundle / run"),
+    entity_id: str | None = Query(None, description="实体 ID：bvid / bundle_id / run_id"),
     status: str | None = Query(None, description="状态：running / success / failed"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -329,6 +333,8 @@ async def list_conversations(
             run_id=run_id,
             agent_name=agent_name,
             word=word,
+            entity_type=entity_type,
+            entity_id=entity_id,
             status=status,
             limit=limit,
             offset=offset,
@@ -342,6 +348,14 @@ async def get_conversation_detail(conversation_id: str) -> dict:
     if not conversation:
         raise HTTPException(status_code=404, detail=f"对话记录 '{conversation_id}' 不存在")
     return conversation
+
+
+@router.get("/agent-conversations/{conversation_id}/trace", summary="获取 Agent 对话 Trace")
+async def get_conversation_trace(conversation_id: str) -> dict:
+    trace = _run_with_conn(lambda conn: get_agent_conversation_trace(conn, conversation_id))
+    if not trace:
+        raise HTTPException(status_code=404, detail=f"对话记录 '{conversation_id}' 不存在")
+    return trace
 
 
 # ── 统计概览 ─────────────────────────────────────────────────

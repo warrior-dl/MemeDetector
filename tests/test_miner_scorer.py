@@ -35,6 +35,7 @@ async def test_score_video_comments_returns_fallback_when_llm_fails(monkeypatch)
         "meme_detector.miner.scorer.get_bilibili_video_context",
         fake_get_bilibili_video_context,
     )
+    monkeypatch.setattr("meme_detector.llm_factory.resolve_async_openai_client_cls", lambda cls: cls)
     monkeypatch.setattr("meme_detector.miner.scorer.AsyncOpenAI", FakeAsyncOpenAI)
     monkeypatch.setattr("meme_detector.miner.scorer.get_current_run_id", lambda: None)
     monkeypatch.setattr("meme_detector.miner.scorer.settings.miner_llm_timeout_seconds", 12.5)
@@ -95,6 +96,7 @@ async def test_score_video_comments_parses_llm_json(monkeypatch):
         "meme_detector.miner.scorer.get_bilibili_video_context",
         fake_get_bilibili_video_context,
     )
+    monkeypatch.setattr("meme_detector.llm_factory.resolve_async_openai_client_cls", lambda cls: cls)
     monkeypatch.setattr("meme_detector.miner.scorer.AsyncOpenAI", FakeAsyncOpenAI)
     monkeypatch.setattr("meme_detector.miner.scorer.get_current_run_id", lambda: None)
 

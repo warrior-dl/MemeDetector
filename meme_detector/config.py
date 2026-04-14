@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     research_llm_model: str = ""
     research_llm_provider: str = ""
 
+    # ── Langfuse ──
+    langfuse_enabled: bool = False
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = ""
+    langfuse_public_base_url: str = ""
+
     # ── Web 搜索（火山引擎联网搜索） ──
     web_search_api_key: str = ""
     web_search_timeout_seconds: float = 30.0

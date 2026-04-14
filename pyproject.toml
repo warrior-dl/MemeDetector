@@ -16,6 +16,7 @@ dependencies = [
     # AI 框架
     "pydantic-ai>=0.0.14",
     "openai>=1.0.0",           # OpenAI-compatible 接口客户端
+    "langfuse>=2.60.0",
     # 存储
     "duckdb>=1.1.0",
     "meilisearch>=0.31.0",

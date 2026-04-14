@@ -10,6 +10,7 @@ export function useMemes(params: MemeSearchParams = {}) {
         limit: String(params.limit ?? 50),
         offset: String(params.offset ?? 0),
       });
+      searchParams.set("sort_by", "updated_at:desc");
       if (params.query) {
         searchParams.set("q", params.query);
         return fetchJson<MemeSearchResponse>(`/api/v1/memes/search?${searchParams.toString()}`);
@@ -23,7 +24,6 @@ export function useMemes(params: MemeSearchParams = {}) {
       if (params.lifecycle) {
         searchParams.set("lifecycle", params.lifecycle);
       }
-      searchParams.set("sort_by", "updated_at:desc");
       return fetchJson<MemeSearchResponse>(`/api/v1/memes?${searchParams.toString()}`);
     },
   });

@@ -12,11 +12,12 @@ from typing import Any
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
+from meme_detector.agent_tracing import TraceTimelineBuilder
 from meme_detector.config import settings
 from meme_detector.llm_factory import (
     build_async_openai_client,
     load_json_response,
-    request_json_chat_completion,
+    request_json_chat_completion_detailed,
     resolve_llm_config,
 )
 from meme_detector.logging_utils import get_logger
@@ -238,7 +239,12 @@ def _normalize_record_payload(record: dict[str, Any], *, target_title: str, toda
     return payload
 
 
-async def decide_bundle(bundle: MinerBundle, *, today: date | None = None) -> ResearchDecision:
+async def decide_bundle(
+    bundle: MinerBundle,
+    *,
+    today: date | None = None,
+    trace: TraceTimelineBuilder | None = None,
+) -> ResearchDecision:
     config = resolve_llm_config("research")
     if not config.api_key.strip():
         raise RuntimeError("RESEARCH_LLM_API_KEY/LLM_API_KEY 未配置，无法执行 Research 裁决")
@@ -250,7 +256,7 @@ async def decide_bundle(bundle: MinerBundle, *, today: date | None = None) -> Re
         client_cls=AsyncOpenAI,
     )
     payload = _build_bundle_payload(bundle)
-    raw = await request_json_chat_completion(
+    llm_response = await request_json_chat_completion_detailed(
         client=client,
         model_name=config.model,
         messages=[
@@ -258,8 +264,35 @@ async def decide_bundle(bundle: MinerBundle, *, today: date | None = None) -> Re
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ],
     )
+    raw = llm_response["content"]
+    if trace is not None:
+        trace.add_llm_usage(llm_response.get("usage"))
     data = load_json_response(raw)
     draft = _DraftDecision.model_validate(data)
+    if trace is not None:
+        trace.add_step(
+            event_type="llm_generation",
+            stage="reason",
+            title="裁决 competing hypotheses",
+            status="success",
+            summary=f"模型返回决策：{draft.decision}",
+            input_data={
+                "bundle_id": bundle.bundle_id,
+                "hypothesis_count": len(bundle.hypotheses),
+                "evidence_count": len(bundle.evidences),
+            },
+            output_data={
+                "decision": draft.decision,
+                "final_title": draft.final_title,
+                "reason": draft.reason,
+                "raw": raw[:2000],
+            },
+            metadata={
+                "model": config.model,
+                "provider": config.provider,
+                "usage": llm_response.get("usage", {}),
+            },
+        )
     target_index = min(draft.target_hypothesis_index, len(bundle.hypotheses) - 1)
     target_hypothesis = bundle.hypotheses[target_index]
     target_title = draft.final_title or target_hypothesis.candidate_title

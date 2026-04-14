@@ -641,6 +641,12 @@ def test_admin_page_and_runs_api(client):
     assert conversation_detail["message_count"] == 2
     assert conversation_detail["output"]["title"] == "抽象圣经"
 
+    conversation_trace_resp = client.get(f"/api/v1/agent-conversations/{conversation_id}/trace")
+    assert conversation_trace_resp.status_code == 200
+    conversation_trace = conversation_trace_resp.json()
+    assert conversation_trace["conversation"]["id"] == conversation_id
+    assert conversation_trace["steps"] == []
+
 
 def test_jobs_run_endpoint(client, monkeypatch):
     called = {}

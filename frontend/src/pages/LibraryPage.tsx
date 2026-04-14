@@ -16,6 +16,7 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useMemeDetail, useMemes, useVerifyMeme } from "../features/library/hooks";
 import type { MemeItem } from "../data/types";
 import { PageSection } from "../ui/PageSection";
+import { formatDateTime } from "../utils/format";
 
 export function LibraryPage() {
   const [query, setQuery] = useState("");
@@ -61,6 +62,12 @@ export function LibraryPage() {
         render: (value?: string) => value || "--",
       },
       {
+        title: "更新时间",
+        dataIndex: "updated_at",
+        width: 180,
+        render: (value?: string) => formatDateTime(value),
+      },
+      {
         title: "校验",
         dataIndex: "human_verified",
         render: (value?: boolean) =>
@@ -73,7 +80,7 @@ export function LibraryPage() {
   return (
     <PageSection
       title="梗库"
-      subtitle="正式入库后的词条集中管理，不再混在候选表里。"
+      subtitle="正式入库后的词条集中管理，默认按最新更新时间倒序展示，方便查看最近入库结果。"
       extra={
         <Space wrap>
           <Input.Search
@@ -167,6 +174,16 @@ export function LibraryPage() {
                         typeof memeDetailQuery.data.confidence_score === "number"
                           ? memeDetailQuery.data.confidence_score.toFixed(2)
                           : "--",
+                    },
+                    {
+                      key: "first_detected_at",
+                      label: "首次发现",
+                      children: formatDateTime(memeDetailQuery.data.first_detected_at),
+                    },
+                    {
+                      key: "updated_at",
+                      label: "最后更新",
+                      children: formatDateTime(memeDetailQuery.data.updated_at),
                     },
                     {
                       key: "verified",

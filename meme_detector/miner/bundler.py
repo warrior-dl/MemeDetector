@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from time import perf_counter
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
@@ -39,6 +40,8 @@ from meme_detector.pipeline_models import (
 from meme_detector.researcher.tools import volcengine_web_search, volcengine_web_search_summary
 
 logger = get_logger(__name__)
+_MAX_BUNDLE_SEARCH_QUERIES = 2
+_BUNDLE_SEARCH_RESULT_COUNT = 1
 
 _PLAN_SYSTEM = """\
 你是一位中文互联网亚文化侦查员。
@@ -49,6 +52,8 @@ _PLAN_SYSTEM = """\
 2. 优先识别可复用模板句、引用句、填槽项、作品名、人名、事件名、背景词
 3. 搜索默认中性，不要默认加“梗”
 4. 只有在确有必要时，才把查询模式标成 meme_probe
+5. 如果只是大模型通常已知的常识、圈层旧知识、作品基础设定、老台词背景，不要机械搜索
+6. 能靠评论文本、视频上下文和常识判断的，就不要额外搜索
 
 输出 JSON：
 {
@@ -73,8 +78,9 @@ _PLAN_SYSTEM = """\
 
 限制：
 - 最多返回 4 个 span_candidates
-- 最多返回 6 个 search_queries
+- 最多返回 2 个 search_queries
 - query_mode 优先使用 literal 和 contextual
+- 如果无需联网搜索，可以返回空数组
 """
 
 _SYNTHESIS_SYSTEM = """\
@@ -259,6 +265,8 @@ async def build_bundles_from_insights(video: dict, insights: list[dict]) -> list
 
 
 async def build_comment_bundle(video: dict, insight_item: dict) -> MinerBundle:
+    insight_id = str(insight_item.get("insight_id", "")).strip() or "UNKNOWN"
+    bvid = str(video.get("bvid", "")).strip() or "UNKNOWN"
     client = build_async_openai_client(
         "miner",
         timeout=settings.miner_llm_timeout_seconds,
@@ -266,8 +274,33 @@ async def build_comment_bundle(video: dict, insight_item: dict) -> MinerBundle:
         client_cls=AsyncOpenAI,
     )
     llm_config = resolve_llm_config("miner")
+    started_at = perf_counter()
     plan = await _plan_comment_bundle(client, llm_config.model, video, insight_item)
+    plan_finished_at = perf_counter()
+    logger.info(
+        "miner bundle plan ready",
+        extra={
+            "event": "miner_bundle_plan_ready",
+            "insight_id": insight_id,
+            "bvid": bvid,
+            "duration_ms": round((plan_finished_at - started_at) * 1000, 2),
+            "planned_span_count": len(plan.span_candidates),
+            "planned_query_count": len(plan.search_queries),
+        },
+    )
     search_packs = await _collect_search_evidence(plan.search_queries)
+    search_finished_at = perf_counter()
+    logger.info(
+        "miner bundle search evidence collected",
+        extra={
+            "event": "miner_bundle_search_evidence_collected",
+            "insight_id": insight_id,
+            "bvid": bvid,
+            "duration_ms": round((search_finished_at - plan_finished_at) * 1000, 2),
+            "search_query_count": len(search_packs),
+            "web_result_count": sum(len(item.web_results) for item in search_packs),
+        },
+    )
     synthesis = await _synthesize_comment_bundle(
         client=client,
         model_name=llm_config.model,
@@ -276,7 +309,33 @@ async def build_comment_bundle(video: dict, insight_item: dict) -> MinerBundle:
         plan=plan,
         search_packs=search_packs,
     )
-    return _materialize_bundle(video, insight_item, synthesis)
+    synthesis_finished_at = perf_counter()
+    logger.info(
+        "miner bundle synthesis ready",
+        extra={
+            "event": "miner_bundle_synthesis_ready",
+            "insight_id": insight_id,
+            "bvid": bvid,
+            "duration_ms": round((synthesis_finished_at - search_finished_at) * 1000, 2),
+            "span_count": len(synthesis.spans),
+            "hypothesis_count": len(synthesis.hypotheses),
+            "evidence_count": len(synthesis.evidences),
+        },
+    )
+    bundle = _materialize_bundle(video, insight_item, synthesis)
+    logger.info(
+        "miner bundle materialized",
+        extra={
+            "event": "miner_bundle_materialized",
+            "insight_id": insight_id,
+            "bvid": bvid,
+            "duration_ms": round((perf_counter() - started_at) * 1000, 2),
+            "span_count": len(bundle.spans),
+            "hypothesis_count": len(bundle.hypotheses),
+            "evidence_count": len(bundle.evidences),
+        },
+    )
+    return bundle
 
 
 async def _plan_comment_bundle(
@@ -314,7 +373,7 @@ async def _collect_search_evidence(search_queries: list[_SearchQuery]) -> list[_
     packs: list[_SearchEvidencePack] = []
     seen_queries: set[tuple[str, str]] = set()
 
-    for item in search_queries[:6]:
+    for item in search_queries[:_MAX_BUNDLE_SEARCH_QUERIES]:
         query = str(item.query).strip()
         query_mode = str(item.query_mode or "literal").strip() or "literal"
         if not query:
@@ -323,10 +382,16 @@ async def _collect_search_evidence(search_queries: list[_SearchQuery]) -> list[_
         if dedup_key in seen_queries:
             continue
         seen_queries.add(dedup_key)
-        summary_result = await volcengine_web_search_summary(query, num_results=3)
+        summary_result = await volcengine_web_search_summary(
+            query,
+            num_results=_BUNDLE_SEARCH_RESULT_COUNT,
+        )
         web_results: list[dict] = []
         if not _is_summary_sufficient(summary_result):
-            web_results = await volcengine_web_search(query, num_results=3)
+            web_results = await volcengine_web_search(
+                query,
+                num_results=_BUNDLE_SEARCH_RESULT_COUNT,
+            )
         packs.append(
             _SearchEvidencePack(
                 query=query,
@@ -485,22 +550,38 @@ def _materialize_bundle(video: dict, insight_item: dict, synthesis: _BundleSynth
                 )
             )
 
+    hypothesis_spans = _dedupe_hypothesis_spans(hypothesis_spans)
+
     evidences: list[Evidence] = []
     for index, item in enumerate(synthesis.evidences):
         hypothesis_id = hypothesis_id_by_index.get(item.hypothesis_index)
         if not hypothesis_id:
             continue
+        query = str(item.query or "").strip()
+        if not query:
+            logger.warning(
+                "miner bundle evidence skipped because query is empty",
+                extra={
+                    "event": "miner_bundle_evidence_skipped_empty_query",
+                    "insight_id": insight_id,
+                    "hypothesis_index": item.hypothesis_index,
+                    "span_index": item.span_index,
+                    "source_kind": item.source_kind,
+                    "source_title": str(item.source_title or "").strip(),
+                },
+            )
+            continue
         evidences.append(
             Evidence(
-                evidence_id=_build_hash_id("ev", insight_id, str(index), item.query, item.source_title),
+                evidence_id=_build_hash_id("ev", insight_id, str(index), query, item.source_title),
                 hypothesis_id=hypothesis_id,
                 span_id=span_id_by_index.get(item.span_index) if item.span_index is not None else None,
-                query=item.query,
+                query=query,
                 query_mode=item.query_mode,
                 source_kind=item.source_kind,
-                source_title=item.source_title,
-                source_url=item.source_url,
-                snippet=item.snippet,
+                source_title=str(item.source_title or "").strip(),
+                source_url=str(item.source_url or "").strip(),
+                snippet=str(item.snippet or "").strip(),
                 evidence_direction=item.evidence_direction,
                 evidence_strength=item.evidence_strength,
             )
@@ -551,6 +632,18 @@ def _materialize_bundle(video: dict, insight_item: dict, synthesis: _BundleSynth
 def _build_hash_id(prefix: str, *parts: str) -> str:
     joined = "|".join(str(item or "").strip() for item in parts)
     return f"{prefix}_{hashlib.sha256(joined.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _dedupe_hypothesis_spans(items: list[HypothesisSpanLink]) -> list[HypothesisSpanLink]:
+    deduped: list[HypothesisSpanLink] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items:
+        key = (item.hypothesis_id, item.span_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
 
 
 def _normalize_text(value: str) -> str:

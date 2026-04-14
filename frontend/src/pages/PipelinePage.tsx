@@ -3,6 +3,7 @@ import {
   Button,
   Card,
   Col,
+  Divider,
   Descriptions,
   Empty,
   List,
@@ -15,10 +16,12 @@ import {
   Typography,
 } from "antd";
 import { useEffect, useState } from "react";
+import { useAgentConversationTrace, useAgentConversations } from "../features/agents/hooks";
 import { useJobs, useRunDetail, useRuns, useTriggerJob } from "../features/pipeline/hooks";
+import { AgentTracePanel } from "../ui/AgentTracePanel";
 import { PageSection } from "../ui/PageSection";
 import { JsonPanel } from "../ui/JsonPanel";
-import { RunStatusTag } from "../ui/StatusTags";
+import { ConversationStatusTag, RunStatusTag } from "../ui/StatusTags";
 import { formatDateTime, formatDuration, formatOptionalDateTime } from "../utils/format";
 
 function renderJobProgress(job: {
@@ -69,6 +72,13 @@ export function PipelinePage() {
   const jobsQuery = useJobs();
   const runDetailQuery = useRunDetail(selectedRunId);
   const triggerMutation = useTriggerJob();
+  const runConversationsQuery = useAgentConversations({
+    runId: selectedRunId,
+    limit: 50,
+    offset: 0,
+  });
+  const [selectedConversationId, setSelectedConversationId] = useState<string>();
+  const traceDetailQuery = useAgentConversationTrace(selectedConversationId);
 
   useEffect(() => {
     const items = runsQuery.data ?? [];
@@ -82,6 +92,19 @@ export function PipelinePage() {
       setSelectedRunId(items[0].id);
     }
   }, [runsQuery.data, selectedRunId]);
+
+  useEffect(() => {
+    const items = runConversationsQuery.data?.items ?? [];
+    if (!items.length) {
+      if (selectedConversationId) {
+        setSelectedConversationId(undefined);
+      }
+      return;
+    }
+    if (!selectedConversationId || !items.some((item) => item.id === selectedConversationId)) {
+      setSelectedConversationId(items[0].id);
+    }
+  }, [runConversationsQuery.data, selectedConversationId]);
 
   const jobs = jobsQuery.data ?? [];
 
@@ -329,6 +352,75 @@ export function PipelinePage() {
                         description={runDetailQuery.data.error_message}
                       />
                     ) : null}
+                    <Divider style={{ marginBlock: 4 }}>Agent Traces</Divider>
+                    {runConversationsQuery.isLoading ? (
+                      <Spin />
+                    ) : runConversationsQuery.error ? (
+                      <Alert
+                        type="error"
+                        message="运行关联 Trace 加载失败"
+                        description={String(runConversationsQuery.error)}
+                      />
+                    ) : !(runConversationsQuery.data?.items?.length) ? (
+                      <Empty description="这个运行还没有 Agent Trace" />
+                    ) : (
+                      <Row gutter={[16, 16]}>
+                        <Col xs={24} xl={9}>
+                          <List
+                            dataSource={runConversationsQuery.data?.items ?? []}
+                            renderItem={(item) => (
+                              <List.Item
+                                style={{
+                                  cursor: "pointer",
+                                  paddingInline: 12,
+                                  borderRadius: 12,
+                                  background:
+                                    item.id === selectedConversationId
+                                      ? "rgba(59, 130, 246, 0.08)"
+                                      : "transparent",
+                                }}
+                                onClick={() => setSelectedConversationId(item.id)}
+                              >
+                                <List.Item.Meta
+                                  title={
+                                    <Space wrap>
+                                      <Typography.Text strong>
+                                        {item.agent_name} · {item.entity_id || item.word}
+                                      </Typography.Text>
+                                      <ConversationStatusTag status={item.status} />
+                                    </Space>
+                                  }
+                                  description={
+                                    <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                                      <Typography.Text type="secondary">
+                                        {formatDateTime(item.started_at)}
+                                      </Typography.Text>
+                                      <Typography.Text>{item.summary || "暂无摘要"}</Typography.Text>
+                                    </Space>
+                                  }
+                                />
+                              </List.Item>
+                            )}
+                          />
+                        </Col>
+                        <Col xs={24} xl={15}>
+                          {traceDetailQuery.isLoading ? (
+                            <Spin />
+                          ) : traceDetailQuery.error ? (
+                            <Alert
+                              type="error"
+                              message="Trace 详情加载失败"
+                              description={String(traceDetailQuery.error)}
+                            />
+                          ) : (
+                            <AgentTracePanel
+                              trace={traceDetailQuery.data}
+                              emptyText="未选择 Trace"
+                            />
+                          )}
+                        </Col>
+                      </Row>
+                    )}
                     <JsonPanel title="运行载荷" value={runDetailQuery.data.payload ?? {}} />
                   </Space>
                 )}

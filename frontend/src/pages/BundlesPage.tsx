@@ -15,7 +15,9 @@ import {
   Typography,
 } from "antd";
 import { useEffect, useState } from "react";
+import { useAgentConversationTrace, useAgentConversations } from "../features/agents/hooks";
 import { useResearchBundleDetail, useResearchBundlesPage } from "../features/research/hooks";
+import { AgentTracePanel } from "../ui/AgentTracePanel";
 import { PageSection } from "../ui/PageSection";
 import { BundleStatusTag, HypothesisStatusTag, ResearchDecisionTag } from "../ui/StatusTags";
 import { formatDateTime } from "../utils/format";
@@ -35,6 +37,15 @@ export function BundlesPage() {
     offset: (page - 1) * pageSize,
   });
   const bundleDetailQuery = useResearchBundleDetail(selectedBundleId);
+  const traceConversationsQuery = useAgentConversations({
+    agentName: "researcher",
+    entityType: "bundle",
+    entityId: selectedBundleId,
+    limit: 10,
+    offset: 0,
+  });
+  const selectedConversationId = traceConversationsQuery.data?.items?.[0]?.id;
+  const traceQuery = useAgentConversationTrace(selectedConversationId);
 
   useEffect(() => {
     const items = bundlesQuery.data?.items ?? [];
@@ -241,6 +252,32 @@ export function BundlesPage() {
                         ))}
                       </Space>
                     </Space>
+                  ),
+                },
+                {
+                  key: "trace",
+                  label: `Trace (${traceConversationsQuery.data?.total ?? 0})`,
+                  children: traceConversationsQuery.isLoading ? (
+                    <Spin />
+                  ) : traceConversationsQuery.error ? (
+                    <Alert
+                      type="error"
+                      message="Trace 加载失败"
+                      description={String(traceConversationsQuery.error)}
+                    />
+                  ) : traceQuery.isLoading ? (
+                    <Spin />
+                  ) : traceQuery.error ? (
+                    <Alert
+                      type="error"
+                      message="Trace 详情加载失败"
+                      description={String(traceQuery.error)}
+                    />
+                  ) : (
+                    <AgentTracePanel
+                      trace={traceQuery.data}
+                      emptyText="这个证据包还没有 Research Trace"
+                    />
                   ),
                 },
                 {
