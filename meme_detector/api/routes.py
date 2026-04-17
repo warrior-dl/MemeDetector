@@ -53,6 +53,43 @@ def _run_with_conn(callback):
         return callback(conn)
 
 
+def _escape_meili_filter_value(value: str) -> str:
+    """Escape a user-supplied string for safe use inside a Meilisearch filter literal.
+
+    Meilisearch filter syntax quotes string values with double quotes, e.g.
+    ``category = "抽象"``. Without escaping, a value containing ``"`` would allow
+    callers to break out of the literal and inject additional filter clauses
+    (e.g. ``a" OR human_verified = true OR "b``). Backslashes must be escaped
+    first so that the escaped quotes are not themselves re-escaped.
+    """
+
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+_MEILI_SORT_FIELDS = {
+    "heat_index",
+    "updated_at",
+    "first_detected_at",
+    "confidence_score",
+}
+_MEILI_SORT_DIRECTIONS = {"asc", "desc"}
+
+
+def _validate_meili_sort(sort_by: str) -> str:
+    """Reject arbitrary sort expressions to prevent filter/sort injection.
+
+    Only ``<allowed_field>:asc|desc`` is accepted; anything else raises a 400.
+    """
+
+    normalized = (sort_by or "").strip()
+    if ":" not in normalized:
+        raise HTTPException(status_code=400, detail="sort_by 必须形如 field:asc|desc")
+    field, _, direction = normalized.partition(":")
+    if field not in _MEILI_SORT_FIELDS or direction not in _MEILI_SORT_DIRECTIONS:
+        raise HTTPException(status_code=400, detail=f"不支持的 sort_by: {sort_by}")
+    return f"{field}:{direction}"
+
+
 # ── 梗库检索 ─────────────────────────────────────────────────
 
 @router.get("/memes", summary="梗列表（支持过滤、排序、分页）")
@@ -66,24 +103,30 @@ async def list_memes(
 ) -> dict:
     filters_parts = []
     if category:
-        filters_parts.append(f'category = "{category}"')
+        filters_parts.append(f'category = "{_escape_meili_filter_value(category)}"')
     if lifecycle:
-        filters_parts.append(f'lifecycle_stage = "{lifecycle}"')
+        filters_parts.append(
+            f'lifecycle_stage = "{_escape_meili_filter_value(lifecycle)}"'
+        )
     if verified_only:
         filters_parts.append("human_verified = true")
 
     filters = " AND ".join(filters_parts) if filters_parts else None
-    return await search_memes("", filters=filters, sort=[sort_by], limit=limit, offset=offset)
+    validated_sort = _validate_meili_sort(sort_by)
+    return await search_memes(
+        "", filters=filters, sort=[validated_sort], limit=limit, offset=offset
+    )
 
 
 @router.get("/memes/search", summary="全文检索梗")
 async def full_text_search(
-    q: str = Query(..., description="搜索关键词"),
+    q: str = Query(..., description="搜索关键词", max_length=200),
     sort_by: str = Query("updated_at:desc", description="排序字段"),
     limit: int = Query(10, ge=1, le=50),
     offset: int = Query(0, ge=0),
 ) -> dict:
-    return await search_memes(q, sort=[sort_by], limit=limit, offset=offset)
+    validated_sort = _validate_meili_sort(sort_by)
+    return await search_memes(q, sort=[validated_sort], limit=limit, offset=offset)
 
 
 @router.get("/memes/{meme_id}", summary="获取单个梗详情")

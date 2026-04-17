@@ -49,7 +49,12 @@ class Settings(BaseSettings):
 
     # ── Meilisearch ──
     meili_url: str = "http://localhost:7700"
-    meili_master_key: str = "dev-master-key"
+    # No hard-coded default: reading from the environment avoids baking a
+    # well-known master key into production builds when ``.env`` is missing.
+    # Set ``MEILI_MASTER_KEY`` explicitly (see ``.env.example``); for local
+    # development ``dev-master-key-1234`` is provided in ``.env.example`` and
+    # ``docker-compose.yml``.
+    meili_master_key: str = ""
     meili_index_name: str = "memes"
 
     # ── 采集参数 ──
