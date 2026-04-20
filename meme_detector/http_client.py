@@ -17,6 +17,7 @@ FastAPI 的调度 / agent 管线里同一 event loop 会短时间内发很多下
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import weakref
 from dataclasses import dataclass, field
 
@@ -71,7 +72,6 @@ async def aclose_all() -> None:
     if not clients:
         return
     for client in clients.values():
-        try:
+        # pragma: no cover - best effort
+        with contextlib.suppress(Exception):
             await client.aclose()
-        except Exception:  # pragma: no cover - best effort
-            pass
