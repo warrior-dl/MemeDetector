@@ -102,9 +102,7 @@ def upsert_scout_raw_videos(
             continue
 
         if not existing_row and any(
-            snap["signature"] == signature
-            for snap_date, snap in snapshots_for_bvid.items()
-            if snap_date != target_date
+            snap["signature"] == signature for snap_date, snap in snapshots_for_bvid.items() if snap_date != target_date
         ):
             stats["cross_day_duplicate_count"] += 1
             continue
@@ -910,11 +908,7 @@ def _has_duplicate_scout_snapshot(
     exclude_date: date,
 ) -> bool:
     snapshots = _bulk_load_scout_video_snapshots(conn, bvids=[bvid]).get(bvid, {})
-    return any(
-        snap["signature"] == signature
-        for snap_date, snap in snapshots.items()
-        if snap_date != exclude_date
-    )
+    return any(snap["signature"] == signature for snap_date, snap in snapshots.items() if snap_date != exclude_date)
 
 
 def _bulk_load_scout_video_snapshots(

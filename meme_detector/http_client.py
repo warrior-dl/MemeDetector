@@ -24,9 +24,7 @@ from dataclasses import dataclass, field
 import httpx
 
 _LoopClients = dict[str, httpx.AsyncClient]
-_CLIENT_REGISTRY: weakref.WeakKeyDictionary[
-    asyncio.AbstractEventLoop, _LoopClients
-] = weakref.WeakKeyDictionary()
+_CLIENT_REGISTRY: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _LoopClients] = weakref.WeakKeyDictionary()
 
 
 @dataclass(frozen=True)

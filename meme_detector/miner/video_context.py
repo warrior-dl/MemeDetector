@@ -220,9 +220,7 @@ async def _fetch_bibigpt_summary(video_url: str) -> dict:
     retries = max(settings.bibigpt_request_retries, 0)
     timeout = httpx.Timeout(settings.bibigpt_request_timeout_seconds)
     last_error: httpx.RequestError | None = None
-    client = get_async_client(
-        ClientProfile(config_key="miner.bibigpt", timeout=timeout)
-    )
+    client = get_async_client(ClientProfile(config_key="miner.bibigpt", timeout=timeout))
     for attempt in range(retries + 1):
         try:
             resp = await client.post(
