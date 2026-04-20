@@ -17,9 +17,11 @@ from meme_detector.config import settings
 from meme_detector.llm_factory import (
     build_async_openai_client,
     load_json_response,
-    request_json_chat_completion as _request_json_chat_completion,
     request_json_chat_completion_detailed,
     resolve_llm_config,
+)
+from meme_detector.llm_factory import (
+    request_json_chat_completion as _request_json_chat_completion,
 )
 from meme_detector.logging_utils import get_logger
 from meme_detector.pipeline_models import (
@@ -29,49 +31,14 @@ from meme_detector.pipeline_models import (
     ResearchDecision,
 )
 from meme_detector.researcher.models import MemeRecord
+from meme_detector.researcher.taxonomy import (
+    normalize_category as _normalize_category_from_taxonomy,
+)
+from meme_detector.researcher.taxonomy import (
+    normalize_lifecycle_stage as _normalize_lifecycle_stage_from_taxonomy,
+)
 
 logger = get_logger(__name__)
-
-_CATEGORY_ALIASES = {
-    "抽象": "抽象",
-    "抽象梗": "抽象",
-    "谐音": "谐音",
-    "谐音梗": "谐音",
-    "游戏": "游戏",
-    "游戏梗": "游戏",
-    "影视": "影视",
-    "影视梗": "影视",
-    "音乐": "音乐",
-    "音乐梗": "音乐",
-    "社会现象": "社会现象",
-    "社会": "社会现象",
-    "二次元": "二次元",
-    "动漫": "二次元",
-    "动画": "二次元",
-    "鬼畜": "其他",
-    "鬼畜梗": "其他",
-    "其他": "其他",
-}
-
-_LIFECYCLE_ALIASES = {
-    "emerging": "emerging",
-    "新兴": "emerging",
-    "新兴期": "emerging",
-    "增长": "emerging",
-    "增长期": "emerging",
-    "上升": "emerging",
-    "上升期": "emerging",
-    "peak": "peak",
-    "高峰": "peak",
-    "高峰期": "peak",
-    "爆发": "peak",
-    "爆发期": "peak",
-    "declining": "declining",
-    "衰退": "declining",
-    "衰退期": "declining",
-    "下降": "declining",
-    "下降期": "declining",
-}
 
 _DECISION_SYSTEM = """\
 你是一位专业的互联网亚文化研究员。
@@ -221,22 +188,11 @@ def _normalize_source_urls(value: Any) -> list[str]:
 
 
 def _normalize_category(value: Any) -> list[str]:
-    categories: list[str] = []
-    for item in _split_text_list(value):
-        normalized = _CATEGORY_ALIASES.get(item.strip(), "")
-        if normalized and normalized not in categories:
-            categories.append(normalized)
-    return categories or ["其他"]
+    return _normalize_category_from_taxonomy(value)
 
 
 def _normalize_lifecycle_stage(value: Any) -> str:
-    normalized = _LIFECYCLE_ALIASES.get(str(value or "").strip().lower())
-    if normalized:
-        return normalized
-    normalized = _LIFECYCLE_ALIASES.get(str(value or "").strip())
-    if normalized:
-        return normalized
-    return "emerging"
+    return _normalize_lifecycle_stage_from_taxonomy(value)
 
 
 def _normalize_record_payload(record: dict[str, Any], *, target_title: str, today: date) -> dict[str, Any]:

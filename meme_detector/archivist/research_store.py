@@ -14,7 +14,7 @@ def upsert_research_decision(
     conn: duckdb.DuckDBPyConnection,
     decision,
     *,
-    persist_record: bool = False,
+    persist_record: bool | None = None,  # noqa: ARG001 - 兼容旧调用方
 ) -> None:
     """写入 Research 裁决结果，并同步 hypothesis / insight 状态。"""
     from meme_detector.pipeline_models import ResearchDecision, ResearchDecisionType
@@ -96,8 +96,7 @@ def upsert_research_decision(
         """,
         [now, decision.bundle_id],
     )
-    if persist_record and decision.record is not None:
-        upsert_meme_record(conn, decision.record)
+    # 梗库实体持久化由 ``meili_store.upsert_meme`` 负责；DuckDB 不再保留副本。
 
 
 def get_research_decision(
@@ -146,68 +145,6 @@ def get_research_decision(
         evidence_summary=EvidenceSummary.model_validate(_load_json_text(row[8], default={})),
         assessment=ResearchAssessment.model_validate(_load_json_text(row[9], default={})),
         record=record_payload if record_payload else None,
-    )
-
-
-def upsert_meme_record(
-    conn: duckdb.DuckDBPyConnection,
-    record,
-) -> None:
-    from meme_detector.researcher.models import MemeRecord
-
-    if not isinstance(record, MemeRecord):
-        record = MemeRecord.model_validate(record)
-
-    conn.execute(
-        """
-        INSERT INTO meme_records (
-            id,
-            title,
-            alias,
-            definition,
-            origin,
-            category,
-            platform,
-            heat_index,
-            lifecycle_stage,
-            first_detected,
-            source_urls,
-            confidence,
-            human_verified,
-            updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (id) DO UPDATE
-        SET title = excluded.title,
-            alias = excluded.alias,
-            definition = excluded.definition,
-            origin = excluded.origin,
-            category = excluded.category,
-            platform = excluded.platform,
-            heat_index = excluded.heat_index,
-            lifecycle_stage = excluded.lifecycle_stage,
-            first_detected = excluded.first_detected,
-            source_urls = excluded.source_urls,
-            confidence = excluded.confidence,
-            human_verified = excluded.human_verified,
-            updated_at = excluded.updated_at
-        """,
-        [
-            record.id,
-            record.title,
-            json.dumps(record.alias, ensure_ascii=False),
-            record.definition,
-            record.origin,
-            json.dumps(record.category, ensure_ascii=False),
-            record.platform,
-            record.heat_index,
-            record.lifecycle_stage,
-            record.first_detected_at,
-            json.dumps(record.source_urls, ensure_ascii=False),
-            record.confidence_score,
-            record.human_verified,
-            record.updated_at,
-        ],
     )
 
 

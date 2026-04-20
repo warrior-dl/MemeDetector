@@ -4,15 +4,15 @@ DuckDB schema 与连接管理。
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import duckdb
 
+from meme_detector.archivist.sql_utils import quote_identifier
 from meme_detector.config import settings
 from meme_detector.logging_utils import get_logger
-from meme_detector.archivist.sql_utils import quote_identifier
 
 logger = get_logger(__name__)
 _SCHEMA_INIT_LOCK = threading.Lock()
@@ -135,24 +135,9 @@ _MIGRATE_SCOUT_RAW_VIDEOS_RESEARCH_STARTED_AT = """
 ALTER TABLE scout_raw_videos ADD COLUMN IF NOT EXISTS research_started_at TIMESTAMP;
 """
 
-_CREATE_MEME_RECORDS = """
-CREATE TABLE IF NOT EXISTS meme_records (
-    id              TEXT PRIMARY KEY,
-    title           TEXT,
-    alias           TEXT,
-    definition      TEXT,
-    origin          TEXT,
-    category        TEXT,
-    platform        TEXT DEFAULT 'Bilibili',
-    heat_index      INTEGER,
-    lifecycle_stage TEXT,
-    first_detected  DATE,
-    source_urls     TEXT,
-    confidence      DOUBLE,
-    human_verified  BOOLEAN DEFAULT FALSE,
-    updated_at      DATE
-);
-"""
+# 历史上存在过一张 DuckDB ``meme_records`` 表，但实际的梗库写入/读取全部走
+# Meilisearch（``meili_store.upsert_meme`` / ``search_memes``）。该表没有任何读路径，
+# 保留只会带来 DuckDB / Meili 双写不一致的风险，因此这里显式 DROP（migration 6）。
 
 _CREATE_PIPELINE_RUNS = """
 CREATE TABLE IF NOT EXISTS pipeline_runs (
@@ -443,7 +428,11 @@ def _ensure_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(_CREATE_SCOUT_RAW_COMMENTS)
     conn.execute(_CREATE_MEDIA_ASSETS)
     conn.execute(_CREATE_COMMENT_MEDIA_LINKS)
-    conn.execute(_CREATE_MEME_RECORDS)
+    _run_schema_action(
+        conn,
+        name="drop_legacy_meme_records",
+        action=lambda: conn.execute("DROP TABLE IF EXISTS meme_records"),
+    )
     conn.execute(_CREATE_PIPELINE_RUNS)
     conn.execute(_CREATE_VIDEO_CONTEXT_CACHE)
     conn.execute(_CREATE_MINER_COMMENT_INSIGHTS)

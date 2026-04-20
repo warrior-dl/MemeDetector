@@ -201,17 +201,30 @@ def should_fallback_from_response_format(exc: BadRequestError) -> bool:
 
 
 def build_prompt_only_json_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
-    patched_messages = [dict(message) for message in messages]
-    for message in patched_messages:
-        if message.get("role") != "system":
-            continue
-        content = str(message.get("content", "")).strip()
-        reminder = _JSON_PROMPT_ONLY_REMINDER
-        if reminder not in content:
-            message["content"] = f"{content}\n\n{reminder}" if content else reminder
-        return patched_messages
+    """确保消息列表里有一条 system 提示提醒模型只输出 JSON。
 
-    return [{"role": "system", "content": _JSON_PROMPT_ONLY_REMINDER}, *patched_messages]
+    语义（与重构前保持一致）：
+    - 只处理**第一条** ``role == "system"`` 的消息：如果它的正文已经包含
+      ``_JSON_PROMPT_ONLY_REMINDER`` 就原样返回，否则在末尾追加。
+    - 如果整条消息链里**没有** system 消息，则在最前面插入一条只包含提醒的
+      system 消息。
+    - 所有原消息都会被浅拷贝，避免修改调用方传入的 dict。
+    """
+
+    patched = [dict(message) for message in messages]
+    reminder = _JSON_PROMPT_ONLY_REMINDER
+
+    first_system = next(
+        (message for message in patched if message.get("role") == "system"),
+        None,
+    )
+    if first_system is None:
+        return [{"role": "system", "content": reminder}, *patched]
+
+    content = str(first_system.get("content") or "").strip()
+    if reminder not in content:
+        first_system["content"] = f"{content}\n\n{reminder}" if content else reminder
+    return patched
 
 
 def load_json_response(raw: str) -> Any:

@@ -37,8 +37,8 @@ Research LLM 基于 bundle 做 hypothesis 裁决
     ↓
 写入 research_decisions
     ↓
-需要入库时同步写入：
-    Meilisearch + DuckDB meme_records
+需要入库时写入：
+    Meilisearch（梗库实体） + DuckDB research_decisions（决策历史）
 ```
 
 说明：
