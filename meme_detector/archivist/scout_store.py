@@ -4,20 +4,22 @@ Scout 领域 DuckDB 读写。
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import hashlib
+import ipaddress
 import json
 import mimetypes
+import socket
+from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 import duckdb
+import httpx
 
+from meme_detector.archivist.sql_utils import build_where_clause, count_rows
 from meme_detector.config import settings
 from meme_detector.logging_utils import get_logger
-from meme_detector.archivist.sql_utils import build_where_clause, count_rows
 
 logger = get_logger(__name__)
 
@@ -1180,23 +1182,81 @@ def _materialize_media_asset(
     return asset
 
 
+def _is_private_host(host: str) -> bool:
+    """Return True if ``host`` resolves to any address that is not safe to fetch.
+
+    Used to block SSRF into loopback / link-local / private / multicast /
+    reserved ranges before issuing an HTTP request.
+    """
+
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return True
+    for info in infos:
+        sockaddr = info[4]
+        try:
+            ip = ipaddress.ip_address(sockaddr[0])
+        except (ValueError, IndexError):
+            return True
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            return True
+    return False
+
+
+def _validate_media_source_url(source_url: str) -> str:
+    """Validate ``source_url`` against SSRF by scheme and resolved host IP."""
+
+    parsed = urlparse(source_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(f"unsupported scheme: {parsed.scheme or '<empty>'}")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("missing host in source url")
+    if not settings.scout_media_allow_private_hosts and _is_private_host(host):
+        raise ValueError(f"refusing to fetch private host: {host}")
+    return host
+
+
 def _download_media_asset(source_url: str) -> dict:
     fallback_asset_id = f"url_{hashlib.sha256(source_url.encode('utf-8')).hexdigest()}"
+    max_bytes = int(settings.scout_media_max_bytes)
     try:
-        request = Request(source_url, headers={"User-Agent": "Mozilla/5.0 MemeDetector/0.1"})
-        with urlopen(request, timeout=settings.scout_request_timeout) as response:
-            data = response.read()
-            mime_type = response.info().get_content_type() or ""
+        _validate_media_source_url(source_url)
+        headers = {"User-Agent": "Mozilla/5.0 MemeDetector/0.1"}
+        data = bytearray()
+        with httpx.Client(
+            timeout=settings.scout_request_timeout,
+            follow_redirects=False,
+            headers=headers,
+        ) as client:
+            with client.stream("GET", source_url) as response:
+                if response.status_code >= 400:
+                    raise ValueError(f"http {response.status_code}")
+                mime_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip()
+                for chunk in response.iter_bytes():
+                    data.extend(chunk)
+                    if len(data) > max_bytes:
+                        raise ValueError(
+                            f"media payload exceeds max_bytes={max_bytes}"
+                        )
         if not data:
             raise ValueError("empty image payload")
 
-        sha256 = hashlib.sha256(data).hexdigest()
+        sha256 = hashlib.sha256(bytes(data)).hexdigest()
         file_ext = _guess_file_ext(source_url, mime_type)
         asset_root = Path(settings.media_asset_root).resolve() / "comment-images" / sha256[:2]
         asset_root.mkdir(parents=True, exist_ok=True)
         storage_path = asset_root / f"{sha256}{file_ext}"
         if not storage_path.exists():
-            storage_path.write_bytes(data)
+            storage_path.write_bytes(bytes(data))
 
         return {
             "asset_id": sha256,

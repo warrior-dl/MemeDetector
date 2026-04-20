@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
+import duckdb
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -13,6 +15,10 @@ from meme_detector.api.routes import (
     _escape_meili_filter_value,
     _validate_meili_sort,
     router,
+)
+from meme_detector.archivist.scout_store import (
+    _is_private_host,
+    _validate_media_source_url,
 )
 
 
@@ -90,11 +96,11 @@ def _build_spa_test_app(frontend_dist: Path) -> FastAPI:
 @pytest.fixture
 def spa_client(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        "meme_detector.config.settings.duckdb_path",
         str(tmp_path / "security-test.db"),
     )
     monkeypatch.setattr(
-        "meme_detector.archivist.duckdb_store.settings.media_asset_root",
+        "meme_detector.config.settings.media_asset_root",
         str(tmp_path / "assets"),
     )
 
@@ -162,3 +168,110 @@ def test_memes_list_escapes_filter_injection(monkeypatch, spa_client):
     # The dangerous ``"`` must be escaped; the attacker cannot inject an
     # additional ``OR human_verified = true`` clause at filter-parse time.
     assert filters == 'category = "a\\" OR human_verified = true OR \\"b"'
+
+
+# ── SSRF / Media-Asset 路径收紧 ──────────────────────────────
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "localhost",
+        "127.0.0.1",
+        "127.1.2.3",
+        "0.0.0.0",
+        "10.0.0.1",
+        "169.254.169.254",
+        "192.168.0.1",
+        "172.16.0.1",
+        "::1",
+    ],
+)
+def test_is_private_host_flags_unsafe_targets(host: str):
+    assert _is_private_host(host) is True
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "ftp://example.com/foo.jpg",
+        "http://localhost/foo.jpg",
+        "http://127.0.0.1/foo.jpg",
+        "http://169.254.169.254/latest/meta-data/",
+        "http:///nohost",
+        "",
+    ],
+)
+def test_validate_media_source_url_rejects_unsafe(url: str):
+    with pytest.raises(ValueError):
+        _validate_media_source_url(url)
+
+
+def _insert_media_asset_row(db_path: Path, asset_id: str, storage_path: str) -> None:
+    conn = duckdb.connect(str(db_path))
+    try:
+        conn.execute(
+            """
+            INSERT INTO media_assets (asset_id, asset_type, source_url, storage_path,
+                                      download_status, collected_at)
+            VALUES (?, 'comment_picture', 'https://example.com/x.jpg', ?, 'success', ?)
+            """,
+            [asset_id, storage_path, datetime.now()],
+        )
+    finally:
+        conn.close()
+
+
+def test_media_asset_content_refuses_path_outside_root(tmp_path, monkeypatch):
+    from meme_detector.archivist.schema import get_conn
+
+    db_path = tmp_path / "media-test.db"
+    asset_root = tmp_path / "assets"
+    asset_root.mkdir()
+    outside_file = tmp_path / "secret.txt"
+    outside_file.write_text("SECRET-DO-NOT-LEAK", encoding="utf-8")
+
+    monkeypatch.setattr("meme_detector.config.settings.duckdb_path", str(db_path))
+    monkeypatch.setattr(
+        "meme_detector.config.settings.media_asset_root", str(asset_root)
+    )
+
+    # Materialize schema against the fresh db.
+    with get_conn():
+        pass
+
+    _insert_media_asset_row(db_path, "escape", str(outside_file))
+    # Asset whose storage_path is safely inside the asset_root.
+    inside_file = asset_root / "inside.jpg"
+    inside_file.write_bytes(b"fake-image")
+    _insert_media_asset_row(db_path, "inside", str(inside_file))
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/media-assets/escape/content")
+        assert resp.status_code == 404
+        assert "SECRET-DO-NOT-LEAK" not in resp.text
+
+        ok = client.get("/api/v1/media-assets/inside/content")
+        assert ok.status_code == 200
+        assert ok.content == b"fake-image"
+
+
+def test_security_headers_attached():
+    from meme_detector.api.app import SecurityHeadersMiddleware
+
+    app = FastAPI()
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    @app.get("/ping")
+    async def ping() -> dict:
+        return {"ok": True}
+
+    with TestClient(app) as client:
+        resp = client.get("/ping")
+        assert resp.status_code == 200
+        assert resp.headers["x-content-type-options"] == "nosniff"
+        assert resp.headers["referrer-policy"] == "no-referrer"
+        assert resp.headers["x-frame-options"] == "DENY"
+        assert "content-security-policy" in resp.headers

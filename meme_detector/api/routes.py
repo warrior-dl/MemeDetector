@@ -9,13 +9,18 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from meme_detector.archivist.agent_store import (
     get_agent_conversation,
     get_agent_conversation_trace,
     list_agent_conversations,
+)
+from meme_detector.archivist.meili_store import (
+    get_meme,
+    search_memes,
+    update_human_verified,
 )
 from meme_detector.archivist.miner_store import (
     get_comment_bundle_detail,
@@ -23,19 +28,14 @@ from meme_detector.archivist.miner_store import (
     get_miner_comment_insight,
     get_miner_comment_insights_page,
 )
-from meme_detector.archivist.meili_store import (
-    get_meme,
-    search_memes,
-    update_human_verified,
-)
 from meme_detector.archivist.pipeline_run_store import get_pipeline_run, list_pipeline_runs
+from meme_detector.archivist.schema import get_conn
 from meme_detector.archivist.scout_store import (
     get_media_asset,
     get_scout_raw_video,
     get_scout_raw_videos_page,
     update_scout_raw_video_stage,
 )
-from meme_detector.archivist.schema import get_conn
 from meme_detector.pipeline_service import (
     JOB_NAMES,
     get_all_job_runtime_states,
@@ -283,10 +283,23 @@ async def get_media_asset_content(asset_id: str) -> FileResponse:
     storage_path = asset.get("storage_path") or ""
     if not storage_path:
         raise HTTPException(status_code=404, detail=f"媒体资产 '{asset_id}' 没有本地文件")
-    path = Path(storage_path)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"媒体资产 '{asset_id}' 的本地文件不存在")
-    return FileResponse(path, media_type=asset.get("mime_type") or None)
+
+    from meme_detector.config import settings
+
+    try:
+        asset_root = Path(settings.media_asset_root).resolve(strict=False)
+        resolved = Path(storage_path).resolve(strict=False)
+        resolved.relative_to(asset_root)
+    except (OSError, RuntimeError, ValueError):
+        raise HTTPException(
+            status_code=404, detail=f"媒体资产 '{asset_id}' 的本地文件不存在"
+        ) from None
+
+    if not resolved.is_file():
+        raise HTTPException(
+            status_code=404, detail=f"媒体资产 '{asset_id}' 的本地文件不存在"
+        )
+    return FileResponse(resolved, media_type=asset.get("mime_type") or None)
 
 
 @router.post("/memes/{meme_id}/verify", summary="标记梗为人工验证")
