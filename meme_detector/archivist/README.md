@@ -46,8 +46,9 @@ comment_insights -- 评论证据包入口
 comment_spans / hypotheses / hypothesis_spans / evidences / research_decisions
   评论切分结果、竞争假设、证据与最终裁决
 
-meme_records    -- AI 确认的词条备份（Meilisearch 的镜像）
-  id, title, alias, definition, origin, ...
+(注：历史版本曾有 DuckDB ``meme_records`` 表用于 Meilisearch 的本地镜像，
+ 当前实现把梗库实体完全交给 Meilisearch，DuckDB 只保留研究过程数据，
+ 具体见 ``schema._ensure_schema`` 里的 ``drop_legacy_meme_records`` 迁移。)
 
 pipeline_runs   -- Scout / Miner / Researcher 任务运行记录
   id, job_name, trigger_mode, status, started_at, finished_at, payload_json, ...
@@ -84,10 +85,11 @@ agent_conversations  -- Researcher 单词条 Agent 对话审计
 
 ## 重建索引
 
-Meilisearch 的数据可以随时从 DuckDB 重建：
-1. 清空 Meilisearch 索引
-2. 查询 DuckDB `meme_records` 表
-3. 批量 `upsert_meme()` 写回
+Meilisearch 目前是梗库实体的唯一存储（DuckDB 不再保留 ``meme_records`` 副本）。
+要重建索引，需要从 Research 决策历史回放：
+1. 清空 Meilisearch 索引 (``meili_store.clear_index``)
+2. 按 ``research_decisions`` 表里 ``record_json`` 不为空的行 ``MemeRecord.model_validate``
+3. 批量 ``upsert_meme()`` 写回 Meilisearch
 
 ## 当前缓存与审计策略
 

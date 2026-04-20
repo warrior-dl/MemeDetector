@@ -173,7 +173,7 @@ def test_comment_bundle_round_trip_and_research_decision(tmp_path, monkeypatch):
     assert stored_bundle.hypotheses[0].candidate_title == "闭嘴，如果你惹怒了我……"
     assert stored_bundle.evidences[0].query_mode.value == "literal"
 
-    upsert_research_decision(conn, _build_decision(), persist_record=True)
+    upsert_research_decision(conn, _build_decision())
     stored_decision = get_research_decision(conn, "decision_001")
     assert stored_decision is not None
     assert stored_decision.decision.value == "rewrite_title"
@@ -188,15 +188,12 @@ def test_comment_bundle_round_trip_and_research_decision(tmp_path, monkeypatch):
         "SELECT status FROM comment_insights WHERE bundle_id = ?",
         ["bundle_001"],
     ).fetchone()
-    meme_row = conn.execute(
-        "SELECT title FROM meme_records WHERE id = ?",
-        ["闭嘴，如果你惹怒了我……"],
-    ).fetchone()
+    # ``meme_records`` DuckDB 表已删除，梗库实体由 Meilisearch (``upsert_meme``)
+    # 负责存储，这里不再断言 DuckDB 上的副本。
     conn.close()
 
     assert hypothesis_row == ("accepted",)
     assert insight_row == ("researched",)
-    assert meme_row == ("闭嘴，如果你惹怒了我……",)
 
 
 def test_get_comment_bundle_reconstructs_missing_primary_span_link(tmp_path, monkeypatch):

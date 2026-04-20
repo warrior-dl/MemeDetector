@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from contextlib import closing
 
-from meme_detector.archivist.research_store import upsert_research_decision
-from meme_detector.archivist.scout_store import get_pending_scout_raw_videos
 from meme_detector.archivist.miner_store import get_comment_bundle, list_queued_comment_bundles
+from meme_detector.archivist.research_store import upsert_research_decision
 from meme_detector.archivist.schema import get_conn
+from meme_detector.archivist.scout_store import get_pending_scout_raw_videos
 from meme_detector.pipeline_models import MinerBundle, ResearchDecision
 
 
@@ -34,8 +34,4 @@ async def persist_research_decision(decision: ResearchDecision) -> None:
     if decision.record is not None:
         await upsert_meme(decision.record)
     with closing(get_conn()) as conn:
-        upsert_research_decision(
-            conn,
-            decision,
-            persist_record=decision.record is not None,
-        )
+        upsert_research_decision(conn, decision)
