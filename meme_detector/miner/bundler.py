@@ -23,19 +23,13 @@ from meme_detector.llm_factory import (
 from meme_detector.logging_utils import get_logger
 from meme_detector.pipeline_models import (
     Evidence,
-    EvidenceDirection,
     Hypothesis,
     HypothesisSpanLink,
     Insight,
     InsightStatus,
     MinerBundle,
     MinerSummary,
-    QueryMode,
-    QueryPriority,
-    SourceKind,
     Span,
-    SpanType,
-    SuggestedAction,
     VideoRef,
 )
 from meme_detector.researcher.tools import volcengine_web_search, volcengine_web_search_summary
@@ -229,9 +223,8 @@ class _SearchEvidencePack:
 
 
 def _is_high_value_insight(item: dict) -> bool:
-    return (
-        float(item.get("confidence", 0.0) or 0.0) >= settings.miner_comment_confidence_threshold
-        and (bool(item.get("is_meme_candidate")) or bool(item.get("is_insider_knowledge")))
+    return float(item.get("confidence", 0.0) or 0.0) >= settings.miner_comment_confidence_threshold and (
+        bool(item.get("is_meme_candidate")) or bool(item.get("is_insider_knowledge"))
     )
 
 
@@ -430,7 +423,9 @@ async def _collect_search_evidence(
                 query_mode=query_mode,
                 span_text=str(item.span_text or "").strip(),
                 reason=str(item.reason or "").strip(),
-                summary_result=summary_result if isinstance(summary_result, dict) else {"error": "invalid summary result"},
+                summary_result=summary_result
+                if isinstance(summary_result, dict)
+                else {"error": "invalid summary result"},
                 web_results=web_results if isinstance(web_results, list) else [],
             )
         )
@@ -569,7 +564,7 @@ def _materialize_bundle(video: dict, insight_item: dict, synthesis: _BundleSynth
         )
 
     primary_linked = {item.hypothesis_id for item in hypothesis_spans if item.role.value == "primary"}
-    for index, hypothesis in enumerate(hypotheses):
+    for hypothesis in hypotheses:
         if hypothesis.hypothesis_id in primary_linked:
             continue
         fallback_span_id = _choose_primary_span_for_hypothesis(spans)

@@ -215,7 +215,7 @@ async def start_background_job(job_name: str, *, trigger_mode: str = "manual") -
             await run_job(job_name, trigger_mode=trigger_mode)
         except JobAlreadyRunningError:
             pass
-        except Exception as exc:
+        except Exception:
             logger.exception(
                 "background job failed",
                 extra={"event": "background_job_failed", "job_name": job_name, "trigger_mode": trigger_mode},

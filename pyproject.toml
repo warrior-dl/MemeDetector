@@ -38,6 +38,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-httpx>=0.30.0",
+    "pre-commit>=3.5.0",
     "ruff>=0.7.0",
 ]
 
@@ -45,11 +46,35 @@ dev = [
 packages = ["meme_detector"]
 
 [tool.ruff]
-line-length = 100
+# 考虑到中文 docstring、SQL 字符串和 prompt 文本，100 列过紧，放宽到 120
+line-length = 120
 target-version = "py312"
+extend-exclude = [
+    ".venv",
+    "frontend",
+]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
+# E/F: pycodestyle + pyflakes（原有）
+# I: 导入排序（原有）
+# UP: pyupgrade（原有）
+# B: flake8-bugbear，捕捉 except Exception、可变默认参数等高价值 bug
+# SIM: flake8-simplify，合并嵌套 if、使用 contextlib.suppress、布尔冗余
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    # FastAPI 的 Depends / Query / Path 本来就在参数默认值里调用，是标准用法
+    "B008",
+    # zip(..., strict=...) 会改变语义，现有等长循环逐条确认风险大，单独再收
+    "B905",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试里允许 B018（表达式只读不赋值，用于断言副作用）
+"tests/**" = ["B018"]
+# bundler / decider 里保存了整段 LLM prompt（JSON schema + 中文枚举），强行折行会破坏
+# prompt 语义，忽略 E501（长行）
+"meme_detector/miner/bundler.py" = ["E501"]
+"meme_detector/researcher/decider.py" = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

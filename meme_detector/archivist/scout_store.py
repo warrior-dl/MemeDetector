@@ -1252,9 +1252,7 @@ def _download_media_asset(source_url: str) -> dict:
                 for chunk in response.iter_bytes():
                     data.extend(chunk)
                     if len(data) > max_bytes:
-                        raise ValueError(
-                            f"media payload exceeds max_bytes={max_bytes}"
-                        )
+                        raise ValueError(f"media payload exceeds max_bytes={max_bytes}")
         if not data:
             raise ValueError("empty image payload")
 

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from datetime import date
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -13,14 +13,14 @@ from pydantic import BaseModel, Field, model_validator
 from meme_detector.researcher.models import MemeRecord
 
 
-class InsightStatus(str, Enum):
+class InsightStatus(StrEnum):
     pending = "pending"
     inspected = "inspected"
     bundled = "bundled"
     researched = "researched"
 
 
-class SpanType(str, Enum):
+class SpanType(StrEnum):
     template_core = "template_core"
     quote_core = "quote_core"
     slot_filler = "slot_filler"
@@ -31,13 +31,13 @@ class SpanType(str, Enum):
     unknown = "unknown"
 
 
-class QueryPriority(str, Enum):
+class QueryPriority(StrEnum):
     high = "high"
     medium = "medium"
     low = "low"
 
 
-class HypothesisType(str, Enum):
+class HypothesisType(StrEnum):
     template_meme = "template_meme"
     quote_meme = "quote_meme"
     entity_is_meme = "entity_is_meme"
@@ -46,7 +46,7 @@ class HypothesisType(str, Enum):
     unclear = "unclear"
 
 
-class HypothesisStatus(str, Enum):
+class HypothesisStatus(StrEnum):
     pending = "pending"
     evidenced = "evidenced"
     queued = "queued"
@@ -57,28 +57,28 @@ class HypothesisStatus(str, Enum):
     merged = "merged"
 
 
-class HypothesisSpanRole(str, Enum):
+class HypothesisSpanRole(StrEnum):
     primary = "primary"
     related = "related"
     slot_filler = "slot_filler"
     counter_example = "counter_example"
 
 
-class QueryMode(str, Enum):
+class QueryMode(StrEnum):
     literal = "literal"
     contextual = "contextual"
     origin_probe = "origin_probe"
     meme_probe = "meme_probe"
 
 
-class SourceKind(str, Enum):
+class SourceKind(StrEnum):
     video_summary = "video_summary"
     video_transcript = "video_transcript"
     web_search_summary = "web_search_summary"
     web_search_result = "web_search_result"
 
 
-class EvidenceDirection(str, Enum):
+class EvidenceDirection(StrEnum):
     supports_meme = "supports_meme"
     supports_template = "supports_template"
     supports_origin = "supports_origin"
@@ -88,14 +88,14 @@ class EvidenceDirection(str, Enum):
     unclear = "unclear"
 
 
-class SuggestedAction(str, Enum):
+class SuggestedAction(StrEnum):
     search_then_review = "search_then_review"
     search_optional = "search_optional"
     direct_review = "direct_review"
     discard_low_value = "discard_low_value"
 
 
-class ResearchDecisionType(str, Enum):
+class ResearchDecisionType(StrEnum):
     accept = "accept"
     reject = "reject"
     rewrite_title = "rewrite_title"
@@ -136,7 +136,7 @@ class Span(BaseModel):
     reason: str
 
     @model_validator(mode="after")
-    def validate_char_range(self) -> "Span":
+    def validate_char_range(self) -> Span:
         if self.char_start is not None and self.char_end is not None and self.char_end < self.char_start:
             raise ValueError("char_end must be greater than or equal to char_start")
         return self
@@ -192,7 +192,7 @@ class MinerBundle(BaseModel):
     miner_summary: MinerSummary
 
     @model_validator(mode="after")
-    def validate_bundle(self) -> "MinerBundle":
+    def validate_bundle(self) -> MinerBundle:
         if not self.hypotheses:
             raise ValueError("bundle must contain at least one hypothesis")
 
@@ -262,7 +262,7 @@ class ResearchDecision(BaseModel):
     record: MemeRecord | None = None
 
     @model_validator(mode="after")
-    def validate_decision(self) -> "ResearchDecision":
+    def validate_decision(self) -> ResearchDecision:
         if self.decision in {ResearchDecisionType.accept, ResearchDecisionType.rewrite_title}:
             if self.record is None:
                 raise ValueError("record is required for accept and rewrite_title decisions")
@@ -275,4 +275,3 @@ class ResearchDecision(BaseModel):
 
 
 CategoryLiteral = Literal["抽象", "谐音", "游戏", "影视", "音乐", "社会现象", "二次元", "其他"]
-

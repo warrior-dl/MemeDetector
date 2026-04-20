@@ -165,12 +165,7 @@ async def _call_volcengine_search(query: str, num_results: int, search_type: str
     except JSONDecodeError:
         return {"error": _format_non_json_response_error(resp, search_type)}
     if not isinstance(payload, dict):
-        return {
-            "error": (
-                f"Volcengine WebSearch {search_type} 返回了非对象 JSON："
-                f"{type(payload).__name__}"
-            )
-        }
+        return {"error": (f"Volcengine WebSearch {search_type} 返回了非对象 JSON：{type(payload).__name__}")}
     return {"payload": payload, "count": count}
 
 
@@ -295,9 +290,7 @@ async def verify_urls(urls: list[str]) -> list[str]:
     """
     semaphore = asyncio.Semaphore(min(_VERIFY_URL_CONCURRENCY, max(len(urls), 1)))
     client = get_async_client(_verify_urls_profile())
-    results = await asyncio.gather(
-        *[_verify_url(client, semaphore=semaphore, url=url) for url in urls]
-    )
+    results = await asyncio.gather(*[_verify_url(client, semaphore=semaphore, url=url) for url in urls])
     return [url for url in results if isinstance(url, str)]
 
 

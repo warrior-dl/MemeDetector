@@ -28,9 +28,7 @@ class TestStatusDetection:
         assert _extract_status_code(err) == 412
 
     def test_detects_risk_control_html(self):
-        err = DummyError(
-            "The request was rejected because of the bilibili security control policy."
-        )
+        err = DummyError("The request was rejected because of the bilibili security control policy.")
         assert _is_risk_control_error(err) is True
 
     def test_retryable_status_codes_include_429(self):

@@ -5,6 +5,7 @@ Meilisearch 存储层：管理梗库的写入与检索。
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import re
 import threading
@@ -49,25 +50,17 @@ def ensure_index(*, force: bool = False) -> None:
     index_name = settings.meili_index_name
 
     # 创建索引（已存在则忽略）
-    try:
+    with contextlib.suppress(MeilisearchApiError):
         client.create_index(index_name, {"primaryKey": "id"})
-    except MeilisearchApiError:
-        pass
 
     index = client.index(index_name)
 
     # 可搜索字段
-    index.update_searchable_attributes(
-        ["title", "alias", "definition", "origin"]
-    )
+    index.update_searchable_attributes(["title", "alias", "definition", "origin"])
     # 可过滤字段
-    index.update_filterable_attributes(
-        ["category", "platform", "lifecycle_stage", "human_verified"]
-    )
+    index.update_filterable_attributes(["category", "platform", "lifecycle_stage", "human_verified"])
     # 可排序字段
-    index.update_sortable_attributes(
-        ["heat_index", "updated_at", "first_detected_at", "confidence_score"]
-    )
+    index.update_sortable_attributes(["heat_index", "updated_at", "first_detected_at", "confidence_score"])
 
     with _INDEX_READY_LOCK:
         _INDEX_READY.add(cache_key)
@@ -198,10 +191,7 @@ def _search_memes_sync(
     result = index.search(query, params)
     hits = result.get("hits", [])
     if isinstance(hits, list):
-        result["hits"] = [
-            _normalize_document_output(hit)
-            for hit in hits
-        ]
+        result["hits"] = [_normalize_document_output(hit) for hit in hits]
     return result
 
 

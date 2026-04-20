@@ -1,5 +1,5 @@
-import pytest
 import httpx
+import pytest
 from openai import BadRequestError
 
 from meme_detector.config import settings

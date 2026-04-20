@@ -16,7 +16,9 @@ from rich.logging import RichHandler
 
 from meme_detector.config import settings
 
-_LOG_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("log_context", default={})
+# ContextVar 的 default 必须是不可变对象，否则所有 context 会共享同一个 dict。
+# 这里传 None，使用方用 get() or {} 取值（见下方 ``_current_context`` helper）。
+_LOG_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar("log_context", default=None)
 _LOGGING_CONFIGURED = False
 _RESERVED_RECORD_ATTRS = set(logging.makeLogRecord({}).__dict__.keys())
 _PRIMARY_LOG_FIELD_KEYS = (
@@ -57,7 +59,7 @@ _PRIMARY_LOG_FIELD_KEYS = (
 
 class LogContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        context = _LOG_CONTEXT.get()
+        context = _LOG_CONTEXT.get() or {}
         for key, value in context.items():
             if not hasattr(record, key):
                 setattr(record, key, value)
@@ -79,9 +81,7 @@ class JsonLogFormatter(logging.Formatter):
         extras = {
             key: value
             for key, value in record.__dict__.items()
-            if key not in _RESERVED_RECORD_ATTRS
-            and key not in payload
-            and not key.startswith("_")
+            if key not in _RESERVED_RECORD_ATTRS and key not in payload and not key.startswith("_")
         }
         if extras:
             payload["extra"] = extras
@@ -99,10 +99,7 @@ class ConsoleLogFormatter(logging.Formatter):
         if not fields:
             return message
 
-        rendered = " ".join(
-            f"{key}={_format_console_value(value)}"
-            for key, value in fields.items()
-        )
+        rendered = " ".join(f"{key}={_format_console_value(value)}" for key, value in fields.items())
         return f"{message} [{rendered}]"
 
 
@@ -174,7 +171,7 @@ def get_logger(name: str) -> logging.Logger:
 
 
 def bind_log_context(**kwargs: Any) -> Token:
-    current = dict(_LOG_CONTEXT.get())
+    current = dict(_LOG_CONTEXT.get() or {})
     current.update({key: value for key, value in kwargs.items() if value not in (None, "")})
     return _LOG_CONTEXT.set(current)
 

@@ -102,19 +102,12 @@ def _reset() -> None:
         },
     )
     logger.info("data reset summary", extra={"event": "data_reset_summary"})
-    logger.info(
-        f"DuckDB: {result['duckdb_path']} "
-        f"({'deleted' if result['duckdb_deleted'] else 'not found'})"
-    )
+    logger.info(f"DuckDB: {result['duckdb_path']} ({'deleted' if result['duckdb_deleted'] else 'not found'})")
     logger.info(
         f"Media assets: {result['media_asset_root']} "
         f"({'cleared' if result['media_assets_deleted'] else 'already empty'})"
     )
-    logger.info(
-        f"Meilisearch: "
-        f"{'cleared' if result['meili_index_cleared'] else 'warning'} "
-        f"({result['meili_message']})"
-    )
+    logger.info(f"Meilisearch: {'cleared' if result['meili_index_cleared'] else 'warning'} ({result['meili_message']})")
 
 
 if __name__ == "__main__":

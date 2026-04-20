@@ -519,15 +519,12 @@ def materialize_insight_record(
 ) -> dict:
     bvid = str(video.get("bvid", "")).strip()
     collected_date = video.get("collected_date")
-    comment_hash = hashlib.sha256(
-        f"{bvid}|{collected_date}|{global_index}|{comment_text}".encode("utf-8")
-    ).hexdigest()
+    comment_hash = hashlib.sha256(f"{bvid}|{collected_date}|{global_index}|{comment_text}".encode()).hexdigest()
     tags = video.get("tags", [])
     if not isinstance(tags, list):
         tags = []
-    is_high_value = (
-        float(parsed.confidence) >= settings.miner_comment_confidence_threshold
-        and (bool(parsed.is_meme_candidate) or bool(parsed.is_insider_knowledge))
+    is_high_value = float(parsed.confidence) >= settings.miner_comment_confidence_threshold and (
+        bool(parsed.is_meme_candidate) or bool(parsed.is_insider_knowledge)
     )
     return {
         "insight_id": comment_hash,

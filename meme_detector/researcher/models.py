@@ -56,7 +56,7 @@ class ResearchRunResult(BaseModel):
     blocked_pending_video_count: int = 0
 
     @classmethod
-    def blocked_by_pending_videos(cls, pending_video_count: int) -> "ResearchRunResult":
+    def blocked_by_pending_videos(cls, pending_video_count: int) -> ResearchRunResult:
         return cls(blocked_pending_video_count=pending_video_count)
 
     def add_accepted_record(self, record: MemeRecord) -> None:

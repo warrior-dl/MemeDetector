@@ -12,6 +12,7 @@ import duckdb
 
 from meme_detector.archivist.sql_utils import build_where_clause, count_rows
 
+
 def create_agent_conversation(
     conn: duckdb.DuckDBPyConnection,
     *,

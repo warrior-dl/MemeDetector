@@ -9,3 +9,7 @@ __pycache__/
 dist/
 *.egg-info/
 .venv/
+venv/
+
+# Node 依赖（vite / eslint 等本地安装）
+node_modules/

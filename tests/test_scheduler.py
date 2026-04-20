@@ -30,10 +30,7 @@ class _FakeScheduler:
         self.running = False
 
     def get_jobs(self):
-        return [
-            _FakeJob(job["id"], job["name"])
-            for job in self.jobs
-        ]
+        return [_FakeJob(job["id"], job["name"]) for job in self.jobs]
 
 
 @pytest.mark.asyncio

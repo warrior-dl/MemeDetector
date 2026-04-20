@@ -35,12 +35,8 @@ def _flatten_partition_videos(all_partition_data: dict) -> tuple[list[dict], int
                     "comment_snapshots": [],
                 },
             )
-            merged["comments"] = _merge_unique_strings(
-                [*merged["comments"], *video.comments]
-            )
-            merged["tags"] = _merge_unique_strings(
-                [*merged["tags"], *video.tags]
-            )
+            merged["comments"] = _merge_unique_strings([*merged["comments"], *video.comments])
+            merged["tags"] = _merge_unique_strings([*merged["tags"], *video.tags])
             merged["comment_snapshots"] = _merge_comment_snapshots(
                 [*merged["comment_snapshots"], *video.comment_snapshots]
             )

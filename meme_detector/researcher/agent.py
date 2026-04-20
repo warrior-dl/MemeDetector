@@ -23,7 +23,11 @@ from meme_detector.pipeline_service import update_job_runtime_progress
 from meme_detector.researcher.models import ResearchRunResult
 from meme_detector.researcher.persistence import (
     list_queued_bundles as _list_queued_bundles,
+)
+from meme_detector.researcher.persistence import (
     load_bundle as _load_bundle,
+)
+from meme_detector.researcher.persistence import (
     persist_research_decision as _persist_research_decision,
 )
 from meme_detector.researcher.tools import (
@@ -39,6 +43,7 @@ async def _decide_bundle(*args, **kwargs):
 
 
 # ── 主流程 ──────────────────────────────────────────────────
+
 
 async def run_research() -> ResearchRunResult:
     """评论证据包裁决主流程。"""

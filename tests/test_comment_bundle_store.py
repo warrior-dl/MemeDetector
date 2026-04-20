@@ -212,7 +212,8 @@ def test_get_comment_bundle_reconstructs_missing_primary_span_link(tmp_path, mon
 
     assert stored_bundle is not None
     primary_links = [
-        item for item in stored_bundle.hypothesis_spans
+        item
+        for item in stored_bundle.hypothesis_spans
         if item.hypothesis_id == "hyp_1" and item.role.value == "primary"
     ]
     assert len(primary_links) == 1

@@ -566,11 +566,4 @@ def _rename_column_if_present(
         return
     if not _column_exists(conn, table_name=table_name, column_name=old_name):
         return
-    conn.execute(
-        "ALTER TABLE "
-        f"{quoted_table_name} "
-        "RENAME COLUMN "
-        f"{quoted_old_name} "
-        "TO "
-        f"{quoted_new_name}"
-    )
+    conn.execute(f"ALTER TABLE {quoted_table_name} RENAME COLUMN {quoted_old_name} TO {quoted_new_name}")

@@ -95,6 +95,7 @@ def _validate_meili_sort(sort_by: str) -> str:
 
 # ── 梗库检索 ─────────────────────────────────────────────────
 
+
 @router.get("/memes", summary="梗列表（支持过滤、排序、分页）")
 async def list_memes(
     category: str | None = Query(None, description="分类过滤，如：抽象"),
@@ -108,17 +109,13 @@ async def list_memes(
     if category:
         filters_parts.append(f'category = "{_escape_meili_filter_value(category)}"')
     if lifecycle:
-        filters_parts.append(
-            f'lifecycle_stage = "{_escape_meili_filter_value(lifecycle)}"'
-        )
+        filters_parts.append(f'lifecycle_stage = "{_escape_meili_filter_value(lifecycle)}"')
     if verified_only:
         filters_parts.append("human_verified = true")
 
     filters = " AND ".join(filters_parts) if filters_parts else None
     validated_sort = _validate_meili_sort(sort_by)
-    return await search_memes(
-        "", filters=filters, sort=[validated_sort], limit=limit, offset=offset
-    )
+    return await search_memes("", filters=filters, sort=[validated_sort], limit=limit, offset=offset)
 
 
 @router.get("/memes/search", summary="全文检索梗")
@@ -141,6 +138,7 @@ async def get_meme_detail(meme_id: str) -> dict:
 
 
 # ── Scout 原始数据（内部使用）─────────────────────────────────
+
 
 @router.get("/scout/raw-videos", summary="分页获取 Scout 原始视频快照")
 async def list_scout_raw_videos(
@@ -170,9 +168,7 @@ async def get_scout_raw_video_detail(
     bvid: str,
     collected_date: date = Query(..., description="采集日期，格式 YYYY-MM-DD"),
 ) -> dict:
-    snapshot = _run_with_conn(
-        lambda conn: get_scout_raw_video(conn, bvid=bvid, collected_date=collected_date)
-    )
+    snapshot = _run_with_conn(lambda conn: get_scout_raw_video(conn, bvid=bvid, collected_date=collected_date))
     if not snapshot:
         raise HTTPException(status_code=404, detail=f"原始快照 '{bvid}@{collected_date}' 不存在")
     return snapshot
@@ -203,6 +199,7 @@ async def set_scout_raw_video_stage(
 
 
 # ── Miner 评论线索（内部使用）─────────────────────────────────
+
 
 @router.get("/miner/comment-insights", summary="分页获取 Miner 评论线索")
 async def list_miner_comment_insights(
@@ -291,14 +288,10 @@ async def get_media_asset_content(asset_id: str) -> FileResponse:
         resolved = Path(storage_path).resolve(strict=False)
         resolved.relative_to(asset_root)
     except (OSError, RuntimeError, ValueError):
-        raise HTTPException(
-            status_code=404, detail=f"媒体资产 '{asset_id}' 的本地文件不存在"
-        ) from None
+        raise HTTPException(status_code=404, detail=f"媒体资产 '{asset_id}' 的本地文件不存在") from None
 
     if not resolved.is_file():
-        raise HTTPException(
-            status_code=404, detail=f"媒体资产 '{asset_id}' 的本地文件不存在"
-        )
+        raise HTTPException(status_code=404, detail=f"媒体资产 '{asset_id}' 的本地文件不存在")
     return FileResponse(resolved, media_type=asset.get("mime_type") or None)
 
 
@@ -312,6 +305,7 @@ async def mark_verified(meme_id: str, verified: bool = True) -> dict:
 
 # ── 运行记录 / 调度概览 ─────────────────────────────────────
 
+
 @router.get("/runs", summary="获取任务运行记录")
 async def list_runs(
     job_name: str | None = Query(
@@ -321,9 +315,7 @@ async def list_runs(
     status: str | None = Query(None, description="运行状态：running / success / failed"),
     limit: int = Query(50, ge=1, le=200),
 ) -> list[dict]:
-    return _run_with_conn(
-        lambda conn: list_pipeline_runs(conn, job_name=job_name, status=status, limit=limit)
-    )
+    return _run_with_conn(lambda conn: list_pipeline_runs(conn, job_name=job_name, status=status, limit=limit))
 
 
 @router.get("/runs/{run_id}", summary="获取单次任务运行详情")
@@ -418,6 +410,7 @@ async def get_conversation_trace(conversation_id: str) -> dict:
 
 
 # ── 统计概览 ─────────────────────────────────────────────────
+
 
 @router.get("/stats", summary="统计概览")
 async def stats() -> dict:
