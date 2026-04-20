@@ -1240,19 +1240,21 @@ def _download_media_asset(source_url: str) -> dict:
         _validate_media_source_url(source_url)
         headers = {"User-Agent": "Mozilla/5.0 MemeDetector/0.1"}
         data = bytearray()
-        with httpx.Client(
-            timeout=settings.scout_request_timeout,
-            follow_redirects=False,
-            headers=headers,
-        ) as client:
-            with client.stream("GET", source_url) as response:
-                if response.status_code >= 400:
-                    raise ValueError(f"http {response.status_code}")
-                mime_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip()
-                for chunk in response.iter_bytes():
-                    data.extend(chunk)
-                    if len(data) > max_bytes:
-                        raise ValueError(f"media payload exceeds max_bytes={max_bytes}")
+        with (
+            httpx.Client(
+                timeout=settings.scout_request_timeout,
+                follow_redirects=False,
+                headers=headers,
+            ) as client,
+            client.stream("GET", source_url) as response,
+        ):
+            if response.status_code >= 400:
+                raise ValueError(f"http {response.status_code}")
+            mime_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip()
+            for chunk in response.iter_bytes():
+                data.extend(chunk)
+                if len(data) > max_bytes:
+                    raise ValueError(f"media payload exceeds max_bytes={max_bytes}")
         if not data:
             raise ValueError("empty image payload")
 
