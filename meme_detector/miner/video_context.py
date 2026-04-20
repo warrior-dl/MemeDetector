@@ -103,19 +103,19 @@ async def get_bilibili_video_context(bvid: str) -> dict:
         )
         return _public_video_context(
             {
-            "bvid": normalized_bvid,
-            "video_url": video_url,
-            "title": title,
-            "status": "unavailable",
-            "duration_seconds": duration_seconds,
-            "summary": "",
-            "description_text": description_text,
-            "content_text": "",
-            "transcript_excerpt": "",
-            "chapters": [],
-            "raw_payload": {},
-            "skip_reason": "missing_api_token",
-            "source": "local",
+                "bvid": normalized_bvid,
+                "video_url": video_url,
+                "title": title,
+                "status": "unavailable",
+                "duration_seconds": duration_seconds,
+                "summary": "",
+                "description_text": description_text,
+                "content_text": "",
+                "transcript_excerpt": "",
+                "chapters": [],
+                "raw_payload": {},
+                "skip_reason": "missing_api_token",
+                "source": "local",
             },
             source="local",
         )
@@ -220,9 +220,7 @@ async def _fetch_bibigpt_summary(video_url: str) -> dict:
     retries = max(settings.bibigpt_request_retries, 0)
     timeout = httpx.Timeout(settings.bibigpt_request_timeout_seconds)
     last_error: httpx.RequestError | None = None
-    client = get_async_client(
-        ClientProfile(config_key="miner.bibigpt", timeout=timeout)
-    )
+    client = get_async_client(ClientProfile(config_key="miner.bibigpt", timeout=timeout))
     for attempt in range(retries + 1):
         try:
             resp = await client.post(

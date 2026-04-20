@@ -17,14 +17,32 @@ from meme_detector.miner.models import (
 )
 from meme_detector.miner.persistence import (
     list_pending_bundle_insights as _list_pending_bundle_insights,
+)
+from meme_detector.miner.persistence import (
     list_pending_scout_videos as _list_pending_scout_videos,
+)
+from meme_detector.miner.persistence import (
     mark_insight_bundle_failed as _mark_insight_bundle_failed,
+)
+from meme_detector.miner.persistence import (
     mark_insight_bundling as _mark_insight_bundling,
+)
+from meme_detector.miner.persistence import (
     mark_video_failed as _mark_video_failed,
+)
+from meme_detector.miner.persistence import (
     mark_video_mined as _mark_video_mined,
+)
+from meme_detector.miner.persistence import (
     mark_video_processing as _mark_video_processing,
+)
+from meme_detector.miner.persistence import (
     persist_comment_bundle as _persist_comment_bundle,
+)
+from meme_detector.miner.persistence import (
     persist_video_insights as _persist_video_insights,
+)
+from meme_detector.miner.persistence import (
     recover_processing_videos as _recover_processing_videos,
 )
 from meme_detector.miner.video_context import get_bilibili_video_context
@@ -264,10 +282,7 @@ async def run_miner_bundles(target_date: date | None = None) -> MinerBundlesRunR
             current=insight_index,
             total=len(pending_insights),
             unit="评论",
-            message=(
-                f"已完成 {insight_index}/{len(pending_insights)} 条评论，"
-                f"累计生成 {bundled_count} 个证据包"
-            ),
+            message=(f"已完成 {insight_index}/{len(pending_insights)} 条评论，累计生成 {bundled_count} 个证据包"),
         )
 
     return MinerBundlesRunResult(

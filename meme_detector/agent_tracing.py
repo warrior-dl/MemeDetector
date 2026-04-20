@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-import os
 from typing import Any
 from uuid import uuid4
 
@@ -24,7 +24,8 @@ if settings.langfuse_host.strip():
     os.environ.setdefault("LANGFUSE_HOST", settings.langfuse_host.strip())
 
 try:
-    from langfuse import Langfuse, get_client as _get_langfuse_client  # type: ignore
+    from langfuse import Langfuse  # type: ignore
+    from langfuse import get_client as _get_langfuse_client
 except Exception as exc:  # pragma: no cover - optional dependency
     Langfuse = None  # type: ignore
     _get_langfuse_client = None

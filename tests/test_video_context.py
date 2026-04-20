@@ -1,5 +1,5 @@
-import pytest
 import httpx
+import pytest
 
 from meme_detector.archivist.schema import get_conn
 from meme_detector.miner.video_context import get_bilibili_video_context
@@ -46,9 +46,7 @@ async def test_long_video_skips_bibigpt_and_caches(monkeypatch, video_context_db
     assert calls["api"] == 0
 
     conn = get_conn()
-    cached = conn.execute(
-        "SELECT status, skip_reason FROM video_context_cache WHERE bvid = 'BV123LONG'"
-    ).fetchone()
+    cached = conn.execute("SELECT status, skip_reason FROM video_context_cache WHERE bvid = 'BV123LONG'").fetchone()
     conn.close()
     assert cached == ("skipped", "duration_exceeded")
 
@@ -135,8 +133,6 @@ async def test_bibigpt_timeout_returns_error_context_without_crashing(
     assert result["error"] == "timed out"
 
     conn = get_conn()
-    cached = conn.execute(
-        "SELECT COUNT(*) FROM video_context_cache WHERE bvid = 'BV123TIMEOUT'"
-    ).fetchone()
+    cached = conn.execute("SELECT COUNT(*) FROM video_context_cache WHERE bvid = 'BV123TIMEOUT'").fetchone()
     conn.close()
     assert cached == (0,)

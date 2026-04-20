@@ -52,10 +52,7 @@ class CommentRiskState:
         return max(0.0, self.cooldown_until - time.monotonic())
 
     def should_skip_comments(self) -> bool:
-        return (
-            self.consecutive_hits >= settings.scout_risk_skip_threshold
-            and self.remaining_cooldown() > 0
-        )
+        return self.consecutive_hits >= settings.scout_risk_skip_threshold and self.remaining_cooldown() > 0
 
     def note_risk_hit(self, cooldown_seconds: float) -> None:
         self.consecutive_hits += 1
@@ -140,7 +137,7 @@ def _is_retryable_comment_error(exc: Exception) -> bool:
 
 
 def _compute_comment_retry_delay(attempt_index: int, exc: Exception) -> float:
-    base_delay = settings.scout_comment_backoff_base * (2 ** attempt_index)
+    base_delay = settings.scout_comment_backoff_base * (2**attempt_index)
     jitter = random.uniform(0.0, 1.0)
     if _is_risk_control_error(exc):
         return max(settings.scout_risk_cooldown_seconds, base_delay) + jitter
@@ -241,7 +238,8 @@ async def _fetch_video_comments(
                         "reply_count": int(reply.get("rcount") or 0),
                         "ctime": int(reply.get("ctime") or 0) or None,
                         "pictures": [
-                            picture for picture in pictures
+                            picture
+                            for picture in pictures
                             if isinstance(picture, dict) and str(picture.get("img_src", "")).strip()
                         ],
                         "content": content_payload,

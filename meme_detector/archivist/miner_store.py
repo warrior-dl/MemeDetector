@@ -9,9 +9,9 @@ from datetime import datetime
 
 import duckdb
 
+from meme_detector.archivist.sql_utils import build_where_clause, count_rows, make_in_placeholders
 from meme_detector.config import settings
 from meme_detector.logging_utils import get_logger
-from meme_detector.archivist.sql_utils import build_where_clause, count_rows, make_in_placeholders
 
 logger = get_logger(__name__)
 
@@ -37,9 +37,10 @@ def upsert_miner_comment_insights(
             tags = []
         status = str(item.get("status", "")).strip()
         if not status:
-            is_high_value = (
-                float(item.get("confidence", 0.0) or 0.0) >= settings.miner_comment_confidence_threshold
-                and (bool(item.get("is_meme_candidate")) or bool(item.get("is_insider_knowledge")))
+            is_high_value = float(
+                item.get("confidence", 0.0) or 0.0
+            ) >= settings.miner_comment_confidence_threshold and (
+                bool(item.get("is_meme_candidate")) or bool(item.get("is_insider_knowledge"))
             )
             status = "pending_bundle" if is_high_value else "discarded"
         rows.append(
@@ -669,9 +670,7 @@ def get_comment_bundle(
         status=str(row[8] or "pending"),
     )
     video_refs = [
-        VideoRef.model_validate(item)
-        for item in _load_json_text(row[9], default=[])
-        if isinstance(item, dict)
+        VideoRef.model_validate(item) for item in _load_json_text(row[9], default=[]) if isinstance(item, dict)
     ]
     miner_summary = MinerSummary.model_validate(_load_json_text(row[10], default={}))
 
@@ -795,11 +794,7 @@ def get_comment_bundle(
         for item in link_rows
     ]
     if hypotheses and spans:
-        primary_hypothesis_ids = {
-            item.hypothesis_id
-            for item in hypothesis_spans
-            if item.role.value == "primary"
-        }
+        primary_hypothesis_ids = {item.hypothesis_id for item in hypothesis_spans if item.role.value == "primary"}
         linked_span_ids_by_hypothesis: dict[str, list[str]] = {}
         for item in hypothesis_spans:
             linked_span_ids_by_hypothesis.setdefault(item.hypothesis_id, []).append(item.span_id)
@@ -811,9 +806,9 @@ def get_comment_bundle(
         for hypothesis in hypotheses:
             if hypothesis.hypothesis_id in primary_hypothesis_ids:
                 continue
-            fallback_span_id = (
-                linked_span_ids_by_hypothesis.get(hypothesis.hypothesis_id, [fallback_default_span_id])[0]
-            )
+            fallback_span_id = linked_span_ids_by_hypothesis.get(hypothesis.hypothesis_id, [fallback_default_span_id])[
+                0
+            ]
             hypothesis_spans.append(
                 HypothesisSpanLink(
                     hypothesis_id=hypothesis.hypothesis_id,

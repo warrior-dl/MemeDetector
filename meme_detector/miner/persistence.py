@@ -17,9 +17,9 @@ from meme_detector.archivist.miner_store import (
 from meme_detector.archivist.schema import get_conn
 from meme_detector.archivist.scout_store import (
     get_pending_scout_raw_videos,
+    mark_scout_raw_videos_mined,
     mark_scout_raw_videos_miner_failed,
     mark_scout_raw_videos_miner_processing,
-    mark_scout_raw_videos_mined,
     recover_stale_miner_processing_videos,
 )
 

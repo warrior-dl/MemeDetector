@@ -382,11 +382,7 @@ async def test_volcengine_web_search_returns_error_without_credentials(monkeypat
 
     results = await tools.volcengine_web_search("依托答辩")
 
-    assert results == [
-        {
-            "error": "WEB_SEARCH_API_KEY 未配置，跳过 Web 搜索"
-        }
-    ]
+    assert results == [{"error": "WEB_SEARCH_API_KEY 未配置，跳过 Web 搜索"}]
 
     summary = await tools.volcengine_web_search_summary("依托答辩")
     assert summary == {"error": "WEB_SEARCH_API_KEY 未配置，跳过 Web 搜索"}

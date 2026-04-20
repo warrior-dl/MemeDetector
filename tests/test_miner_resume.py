@@ -14,8 +14,8 @@ from meme_detector.archivist.scout_store import (
     mark_scout_raw_videos_mined,
     upsert_scout_raw_videos,
 )
-from meme_detector.pipeline_models import MinerBundle
 from meme_detector.miner.scorer import run_miner, run_miner_bundles
+from meme_detector.pipeline_models import MinerBundle
 
 
 @pytest.mark.asyncio
@@ -77,6 +77,7 @@ async def test_run_miner_marks_failed_video_and_continues(tmp_path, monkeypatch)
         "meme_detector.miner.scorer._score_video_comments",
         fake_score_video_comments,
     )
+
     async def fake_build_bundles(_video: dict, _insights: list[dict]):
         return []
 
@@ -88,9 +89,7 @@ async def test_run_miner_marks_failed_video_and_continues(tmp_path, monkeypatch)
     result = await run_miner(target_date=target_date)
 
     conn = get_conn()
-    insight_count = conn.execute(
-        "SELECT COUNT(*) FROM miner_comment_insights WHERE bvid = 'BV1DONE001'"
-    ).fetchone()[0]
+    insight_count = conn.execute("SELECT COUNT(*) FROM miner_comment_insights WHERE bvid = 'BV1DONE001'").fetchone()[0]
     first_video_status = conn.execute(
         """
         SELECT miner_status
@@ -495,9 +494,7 @@ async def test_run_miner_persists_comment_bundle(tmp_path, monkeypatch):
                             "status": "queued",
                         }
                     ],
-                    "hypothesis_spans": [
-                        {"hypothesis_id": "hyp_a", "span_id": "span_a", "role": "primary"}
-                    ],
+                    "hypothesis_spans": [{"hypothesis_id": "hyp_a", "span_id": "span_a", "role": "primary"}],
                     "evidences": [],
                     "miner_summary": {
                         "recommended_hypothesis_id": "hyp_a",
@@ -580,9 +577,7 @@ async def test_run_miner_bundle_failure_does_not_block_insight_persistence(tmp_p
     result = await run_miner(target_date=target_date)
 
     conn = get_conn()
-    insight_count = conn.execute(
-        "SELECT COUNT(*) FROM miner_comment_insights WHERE bvid = 'BV1BUNDLE2'"
-    ).fetchone()[0]
+    insight_count = conn.execute("SELECT COUNT(*) FROM miner_comment_insights WHERE bvid = 'BV1BUNDLE2'").fetchone()[0]
     bundle_count = conn.execute("SELECT COUNT(*) FROM comment_insights").fetchone()[0]
     miner_status = conn.execute(
         "SELECT miner_status FROM scout_raw_videos WHERE bvid = ? AND collected_date = ?",

@@ -1,5 +1,4 @@
 from datetime import date
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -135,7 +134,10 @@ def test_admin_page_and_runs_api(client):
                                 "img_size": 12.5,
                             }
                         ],
-                        "content": {"message": "第一条评论", "pictures": [{"img_src": "https://example.com/comment-1.png"}]},
+                        "content": {
+                            "message": "第一条评论",
+                            "pictures": [{"img_src": "https://example.com/comment-1.png"}],
+                        },
                         "raw_reply": {"rpid": 10001},
                     },
                     {
@@ -516,9 +518,7 @@ def test_admin_page_and_runs_api(client):
     assert scout_raw_payload["items"][0]["picture_count"] >= 0
     assert scout_raw_payload["items"][0]["pipeline_stage"] == "scouted"
 
-    scout_raw_detail_resp = client.get(
-        "/api/v1/scout/raw-videos/BV1raw111?collected_date=2026-03-28"
-    )
+    scout_raw_detail_resp = client.get("/api/v1/scout/raw-videos/BV1raw111?collected_date=2026-03-28")
     assert scout_raw_detail_resp.status_code == 200
     scout_raw_detail = scout_raw_detail_resp.json()
     assert scout_raw_detail["title"] == "第一条 Scout 快照"
@@ -624,9 +624,7 @@ def test_admin_page_and_runs_api(client):
     assert conversations_body["total"] == 2
     assert {item["agent_name"] for item in conversations_body["items"]} == {"miner", "researcher"}
 
-    miner_conversations_resp = client.get(
-        "/api/v1/agent-conversations?limit=10&offset=0&agent_name=miner"
-    )
+    miner_conversations_resp = client.get("/api/v1/agent-conversations?limit=10&offset=0&agent_name=miner")
     assert miner_conversations_resp.status_code == 200
     miner_conversations_body = miner_conversations_resp.json()
     assert miner_conversations_body["total"] == 1
@@ -754,7 +752,8 @@ def test_research_bundle_detail_allows_legacy_bundle_without_primary_span_link(c
     assert response.status_code == 200
     payload = response.json()
     primary_links = [
-        item for item in payload["bundle"]["hypothesis_spans"]
+        item
+        for item in payload["bundle"]["hypothesis_spans"]
         if item["hypothesis_id"] == "legacy-hyp-1" and item["role"] == "primary"
     ]
     assert len(primary_links) == 1

@@ -7,7 +7,10 @@ from meme_detector.archivist.miner_store import (
     upsert_comment_bundle,
 )
 from meme_detector.archivist.schema import get_conn
-from meme_detector.archivist.scout_store import get_pending_scout_raw_videos, upsert_scout_raw_videos
+from meme_detector.archivist.scout_store import (
+    get_pending_scout_raw_videos,
+    upsert_scout_raw_videos,
+)
 from meme_detector.pipeline_models import MinerBundle, ResearchDecision
 from meme_detector.researcher.agent import run_research
 

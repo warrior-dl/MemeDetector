@@ -145,10 +145,7 @@ def _build_job_summary(job_name: str, result: Any) -> dict[str, Any]:
         failed_count = len(payload.get("failed_bundle_ids", []))
         return {
             "result_count": accepted_count,
-            "summary": (
-                f"入库 {accepted_count} 个梗，驳回 {rejected_count} 个证据包，"
-                f"失败 {failed_count} 个"
-            ),
+            "summary": (f"入库 {accepted_count} 个梗，驳回 {rejected_count} 个证据包，失败 {failed_count} 个"),
             "payload": payload,
         }
 

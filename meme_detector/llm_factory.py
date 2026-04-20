@@ -20,8 +20,7 @@ ProviderName = Literal["openai", "deepseek", "moonshotai"]
 logger = get_logger(__name__)
 
 _JSON_PROMPT_ONLY_REMINDER = (
-    "请只返回单个合法 JSON 对象或 JSON 数组，不要输出 Markdown 代码块、解释、"
-    "前后缀文本或其他非 JSON 内容。"
+    "请只返回单个合法 JSON 对象或 JSON 数组，不要输出 Markdown 代码块、解释、前后缀文本或其他非 JSON 内容。"
 )
 _STRUCTURED_OUTPUT_SUPPORT_CACHE: dict[str, bool] = {}
 
@@ -193,11 +192,7 @@ def should_fallback_from_response_format(exc: BadRequestError) -> bool:
                 return True
 
     lowered = str(exc).strip().lower()
-    return (
-        "response_format.type" in lowered
-        and "json_object" in lowered
-        and "not supported" in lowered
-    )
+    return "response_format.type" in lowered and "json_object" in lowered and "not supported" in lowered
 
 
 def build_prompt_only_json_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:

@@ -172,6 +172,7 @@ def test_memes_list_escapes_filter_injection(monkeypatch, spa_client):
 
 # ── SSRF / Media-Asset 路径收紧 ──────────────────────────────
 
+
 @pytest.mark.parametrize(
     "host",
     [
@@ -232,9 +233,7 @@ def test_media_asset_content_refuses_path_outside_root(tmp_path, monkeypatch):
     outside_file.write_text("SECRET-DO-NOT-LEAK", encoding="utf-8")
 
     monkeypatch.setattr("meme_detector.config.settings.duckdb_path", str(db_path))
-    monkeypatch.setattr(
-        "meme_detector.config.settings.media_asset_root", str(asset_root)
-    )
+    monkeypatch.setattr("meme_detector.config.settings.media_asset_root", str(asset_root))
 
     # Materialize schema against the fresh db.
     with get_conn():

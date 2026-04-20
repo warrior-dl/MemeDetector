@@ -50,9 +50,7 @@ def create_app() -> FastAPI:
         logger.info("api lifespan startup", extra={"event": "api_startup"})
         try:
             ensure_index()
-            logger.info(
-                "meilisearch index ensured", extra={"event": "meili_index_ensured"}
-            )
+            logger.info("meilisearch index ensured", extra={"event": "meili_index_ensured"})
         except Exception:
             # Meilisearch may be temporarily unreachable at boot; keep the
             # API up and let ``upsert_meme`` retry ``ensure_index`` on the
@@ -136,9 +134,7 @@ def create_app() -> FastAPI:
             if not path:
                 return FileResponse(frontend_dist / "index.html")
 
-            requested = _safe_frontend_path(
-                frontend_dist, frontend_dist_resolved, Path(path)
-            )
+            requested = _safe_frontend_path(frontend_dist, frontend_dist_resolved, Path(path))
             if requested is not None:
                 return FileResponse(requested)
 

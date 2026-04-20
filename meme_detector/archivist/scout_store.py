@@ -102,9 +102,7 @@ def upsert_scout_raw_videos(
             continue
 
         if not existing_row and any(
-            snap["signature"] == signature
-            for snap_date, snap in snapshots_for_bvid.items()
-            if snap_date != target_date
+            snap["signature"] == signature for snap_date, snap in snapshots_for_bvid.items() if snap_date != target_date
         ):
             stats["cross_day_duplicate_count"] += 1
             continue
@@ -910,11 +908,7 @@ def _has_duplicate_scout_snapshot(
     exclude_date: date,
 ) -> bool:
     snapshots = _bulk_load_scout_video_snapshots(conn, bvids=[bvid]).get(bvid, {})
-    return any(
-        snap["signature"] == signature
-        for snap_date, snap in snapshots.items()
-        if snap_date != exclude_date
-    )
+    return any(snap["signature"] == signature for snap_date, snap in snapshots.items() if snap_date != exclude_date)
 
 
 def _bulk_load_scout_video_snapshots(
@@ -1240,21 +1234,21 @@ def _download_media_asset(source_url: str) -> dict:
         _validate_media_source_url(source_url)
         headers = {"User-Agent": "Mozilla/5.0 MemeDetector/0.1"}
         data = bytearray()
-        with httpx.Client(
-            timeout=settings.scout_request_timeout,
-            follow_redirects=False,
-            headers=headers,
-        ) as client:
-            with client.stream("GET", source_url) as response:
-                if response.status_code >= 400:
-                    raise ValueError(f"http {response.status_code}")
-                mime_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip()
-                for chunk in response.iter_bytes():
-                    data.extend(chunk)
-                    if len(data) > max_bytes:
-                        raise ValueError(
-                            f"media payload exceeds max_bytes={max_bytes}"
-                        )
+        with (
+            httpx.Client(
+                timeout=settings.scout_request_timeout,
+                follow_redirects=False,
+                headers=headers,
+            ) as client,
+            client.stream("GET", source_url) as response,
+        ):
+            if response.status_code >= 400:
+                raise ValueError(f"http {response.status_code}")
+            mime_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip()
+            for chunk in response.iter_bytes():
+                data.extend(chunk)
+                if len(data) > max_bytes:
+                    raise ValueError(f"media payload exceeds max_bytes={max_bytes}")
         if not data:
             raise ValueError("empty image payload")
 
