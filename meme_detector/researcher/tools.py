@@ -12,6 +12,7 @@ from json import JSONDecodeError
 import httpx
 
 from meme_detector.config import settings
+from meme_detector.http_client import ClientProfile, get_async_client
 
 _VOLCENGINE_TRAFFIC_TAG_HEADER = "X-Traffic-Tag"
 _VOLCENGINE_TRAFFIC_TAG_VALUE = "meme_detector_researcher"
@@ -19,6 +20,22 @@ _VOLCENGINE_API_KEY_URL = "https://open.feedcoopapi.com/search_api/web_search"
 _VOLCENGINE_RESPONSE_SNIPPET_LIMIT = 300
 _VOLCENGINE_SSE_DONE_MARKER = "[DONE]"
 _VERIFY_URL_CONCURRENCY = 8
+
+
+def _verify_urls_profile() -> ClientProfile:
+    return ClientProfile(
+        config_key="researcher.verify_urls",
+        timeout=5,
+        follow_redirects=True,
+        headers=(("User-Agent", "Mozilla/5.0"),),
+    )
+
+
+def _volcengine_profile() -> ClientProfile:
+    return ClientProfile(
+        config_key="researcher.volcengine",
+        timeout=settings.web_search_timeout_seconds,
+    )
 
 
 def _build_web_search_body(query: str, count: int, search_type: str) -> dict:
@@ -131,30 +148,30 @@ async def _call_volcengine_search(query: str, num_results: int, search_type: str
         "Authorization": f"Bearer {api_key}",
     }
 
-    async with httpx.AsyncClient(timeout=settings.web_search_timeout_seconds) as client:
-        resp = await client.post(
-            _VOLCENGINE_API_KEY_URL,
-            headers=headers,
-            content=body_str.encode("utf-8"),
-        )
-        resp.raise_for_status()
-        if _is_sse_response(resp):
-            sse_result = _parse_volcengine_sse_payload(resp.text, search_type)
-            if "error" in sse_result:
-                return sse_result
-            return {"payload": sse_result["payload"], "count": count}
-        try:
-            payload = resp.json()
-        except JSONDecodeError:
-            return {"error": _format_non_json_response_error(resp, search_type)}
-        if not isinstance(payload, dict):
-            return {
-                "error": (
-                    f"Volcengine WebSearch {search_type} 返回了非对象 JSON："
-                    f"{type(payload).__name__}"
-                )
-            }
-        return {"payload": payload, "count": count}
+    client = get_async_client(_volcengine_profile())
+    resp = await client.post(
+        _VOLCENGINE_API_KEY_URL,
+        headers=headers,
+        content=body_str.encode("utf-8"),
+    )
+    resp.raise_for_status()
+    if _is_sse_response(resp):
+        sse_result = _parse_volcengine_sse_payload(resp.text, search_type)
+        if "error" in sse_result:
+            return sse_result
+        return {"payload": sse_result["payload"], "count": count}
+    try:
+        payload = resp.json()
+    except JSONDecodeError:
+        return {"error": _format_non_json_response_error(resp, search_type)}
+    if not isinstance(payload, dict):
+        return {
+            "error": (
+                f"Volcengine WebSearch {search_type} 返回了非对象 JSON："
+                f"{type(payload).__name__}"
+            )
+        }
+    return {"payload": payload, "count": count}
 
 
 def _is_sse_response(resp: httpx.Response) -> bool:
@@ -277,14 +294,10 @@ async def verify_urls(urls: list[str]) -> list[str]:
     过滤 404/403 等无效链接，防止 AI 幻觉产生的假来源。
     """
     semaphore = asyncio.Semaphore(min(_VERIFY_URL_CONCURRENCY, max(len(urls), 1)))
-    async with httpx.AsyncClient(
-        timeout=5,
-        follow_redirects=True,
-        headers={"User-Agent": "Mozilla/5.0"},
-    ) as client:
-        results = await asyncio.gather(
-            *[_verify_url(client, semaphore=semaphore, url=url) for url in urls]
-        )
+    client = get_async_client(_verify_urls_profile())
+    results = await asyncio.gather(
+        *[_verify_url(client, semaphore=semaphore, url=url) for url in urls]
+    )
     return [url for url in results if isinstance(url, str)]
 
 

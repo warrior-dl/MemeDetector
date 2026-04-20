@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+import threading
 
 import meilisearch
 from meilisearch.errors import MeilisearchApiError
@@ -16,13 +17,34 @@ from meme_detector.researcher.models import MemeRecord
 
 _MEILI_SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
+# 记录 ``(url, index_name)`` 是否已经 ``ensure_index`` 过；老实现里
+# ``_upsert_meme_sync`` 每写一条都会触发一次 ``update_*_attributes``，把 Meili
+# 写入放大成多次 HTTP + 等待 task。这里用一个 lock 保护的 set 做节流。
+_INDEX_READY: set[tuple[str, str]] = set()
+_INDEX_READY_LOCK = threading.Lock()
+
 
 def get_client() -> meilisearch.Client:
     return meilisearch.Client(settings.meili_url, settings.meili_master_key)
 
 
-def ensure_index() -> None:
-    """确保索引存在，并配置好检索属性。"""
+def _index_cache_key() -> tuple[str, str]:
+    return (settings.meili_url, settings.meili_index_name)
+
+
+def ensure_index(*, force: bool = False) -> None:
+    """确保索引存在，并配置好检索属性。
+
+    通过 ``_INDEX_READY`` 做进程内节流；只有第一次调用或显式 ``force=True`` 时
+    才会真正访问 Meilisearch，后续调用是 O(1) 开销。
+    """
+
+    cache_key = _index_cache_key()
+    if not force:
+        with _INDEX_READY_LOCK:
+            if cache_key in _INDEX_READY:
+                return
+
     client = get_client()
     index_name = settings.meili_index_name
 
@@ -47,6 +69,16 @@ def ensure_index() -> None:
         ["heat_index", "updated_at", "first_detected_at", "confidence_score"]
     )
 
+    with _INDEX_READY_LOCK:
+        _INDEX_READY.add(cache_key)
+
+
+def _mark_index_dirty() -> None:
+    """忘记已记录的 ``ensure_index`` 状态。索引被 ``clear_index`` 删除后调用。"""
+
+    with _INDEX_READY_LOCK:
+        _INDEX_READY.discard(_index_cache_key())
+
 
 def clear_index() -> tuple[bool, str]:
     """清空梗库索引。"""
@@ -54,11 +86,13 @@ def clear_index() -> tuple[bool, str]:
     index_name = settings.meili_index_name
     try:
         client.delete_index(index_name)
+        _mark_index_dirty()
         return True, f"deleted index '{index_name}'"
     except MeilisearchApiError as exc:
         message = str(exc)
         lowered = message.lower()
         if "not found" in lowered or "index_not_found" in lowered:
+            _mark_index_dirty()
             return True, f"index '{index_name}' already empty"
         return False, message
 

@@ -215,37 +215,41 @@ def _extract_duration_seconds(info: dict) -> int | None:
 
 
 async def _fetch_bibigpt_summary(video_url: str) -> dict:
+    from meme_detector.http_client import ClientProfile, get_async_client
+
     retries = max(settings.bibigpt_request_retries, 0)
     timeout = httpx.Timeout(settings.bibigpt_request_timeout_seconds)
     last_error: httpx.RequestError | None = None
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        for attempt in range(retries + 1):
-            try:
-                resp = await client.post(
-                    f"{settings.bibigpt_base_url}/v1/summarizeWithConfig",
-                    headers={"Authorization": f"Bearer {settings.bibigpt_api_token}"},
-                    json={
-                        "url": video_url,
-                        "includeDetail": True,
-                        "limitation": {
-                            "maxDuration": settings.bibigpt_max_duration_seconds,
-                        },
+    client = get_async_client(
+        ClientProfile(config_key="miner.bibigpt", timeout=timeout)
+    )
+    for attempt in range(retries + 1):
+        try:
+            resp = await client.post(
+                f"{settings.bibigpt_base_url}/v1/summarizeWithConfig",
+                headers={"Authorization": f"Bearer {settings.bibigpt_api_token}"},
+                json={
+                    "url": video_url,
+                    "includeDetail": True,
+                    "limitation": {
+                        "maxDuration": settings.bibigpt_max_duration_seconds,
                     },
-                )
-                if resp.status_code == 422:
-                    return {
-                        "status": "skipped",
-                        "skip_reason": "duration_exceeded",
-                        "raw_payload": resp.json(),
-                    }
+                },
+            )
+            if resp.status_code == 422:
+                return {
+                    "status": "skipped",
+                    "skip_reason": "duration_exceeded",
+                    "raw_payload": resp.json(),
+                }
 
-                resp.raise_for_status()
-                return resp.json()
-            except httpx.RequestError as exc:
-                last_error = exc
-                if attempt >= retries:
-                    raise
-                await asyncio.sleep(min(1.5 * (attempt + 1), 5.0))
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.RequestError as exc:
+            last_error = exc
+            if attempt >= retries:
+                raise
+            await asyncio.sleep(min(1.5 * (attempt + 1), 5.0))
 
     if last_error is not None:
         raise last_error

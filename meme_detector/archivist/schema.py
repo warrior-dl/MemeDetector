@@ -4,19 +4,26 @@ DuckDB schema 与连接管理。
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import duckdb
 
+from meme_detector.archivist.sql_utils import quote_identifier
 from meme_detector.config import settings
 from meme_detector.logging_utils import get_logger
-from meme_detector.archivist.sql_utils import quote_identifier
 
 logger = get_logger(__name__)
 _SCHEMA_INIT_LOCK = threading.Lock()
 _SCHEMA_INITIALIZED_PATHS: set[str] = set()
+
+# 进程级 DuckDB 连接缓存：每个 db_path 保留一条底层连接，``get_conn`` 为调用方
+# 下发 ``cursor()``。DuckDB 的 cursor 是一条共享同一数据库/事务上下文的独立连接，
+# 关闭 cursor 不会关闭原始连接，所以既能被既有的 ``with closing(get_conn())`` 模式
+# 安全使用，又可以避免以前每次 ``duckdb.connect`` 带来的开销。
+_CONN_CACHE: dict[str, duckdb.DuckDBPyConnection] = {}
+_CONN_CACHE_LOCK = threading.Lock()
 
 _CREATE_SCOUT_RAW_VIDEOS = """
 CREATE TABLE IF NOT EXISTS scout_raw_videos (
@@ -408,11 +415,36 @@ ON agent_trace_events(conversation_id, step_index);
 
 
 def get_conn() -> duckdb.DuckDBPyConnection:
+    """获取与 ``settings.duckdb_path`` 绑定的 DuckDB 连接。
+
+    返回的是底层共享连接的 ``cursor()``，与原先每次 ``duckdb.connect`` 的 API 完全
+    兼容（``executemany`` / 事务 / `` with closing(...) as conn `` 都可用）。cursor
+    的 ``close()`` 只释放自身，不会连带关闭共享连接，因此可以被重复调用。
+    """
+
     path = Path(settings.duckdb_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = duckdb.connect(str(path))
-    _ensure_schema_once(conn, db_key=str(path.resolve()))
-    return conn
+    path_key = str(path.resolve())
+    with _CONN_CACHE_LOCK:
+        conn = _CONN_CACHE.get(path_key)
+        if conn is None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            conn = duckdb.connect(path_key)
+            _CONN_CACHE[path_key] = conn
+            _ensure_schema_once(conn, db_key=path_key)
+    return conn.cursor()
+
+
+def reset_connection_cache() -> None:
+    """关闭并清空所有缓存的 DuckDB 连接。主要给测试/脚本使用。"""
+
+    with _CONN_CACHE_LOCK:
+        for cached in _CONN_CACHE.values():
+            try:
+                cached.close()
+            except Exception:  # pragma: no cover - best effort
+                logger.debug("duckdb cached conn close failed", exc_info=True)
+        _CONN_CACHE.clear()
+        _SCHEMA_INITIALIZED_PATHS.clear()
 
 
 def _ensure_schema_once(conn: duckdb.DuckDBPyConnection, *, db_key: str) -> None:

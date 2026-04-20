@@ -81,6 +81,9 @@ def upsert_scout_raw_videos(
         )
         return stats
 
+    bvids = [video["bvid"] for video in structured_videos]
+    existing_snapshots = _bulk_load_scout_video_snapshots(conn, bvids=bvids)
+
     for row, video in zip(rows, structured_videos, strict=False):
         signature = _build_scout_video_signature(
             partition=video["partition"],
@@ -92,38 +95,16 @@ def upsert_scout_raw_videos(
         )
         bvid = video["bvid"]
 
-        existing_row = conn.execute(
-            """
-            SELECT
-                partition,
-                title,
-                description,
-                video_url,
-                tags_json,
-                comments_json
-            FROM scout_raw_videos
-            WHERE bvid = ? AND collected_date = ?
-            """,
-            [bvid, target_date],
-        ).fetchone()
-        if existing_row:
-            existing_signature = _build_scout_video_signature(
-                partition=str(existing_row[0] or "").strip(),
-                title=str(existing_row[1] or "").strip(),
-                description=str(existing_row[2] or "").strip(),
-                video_url=str(existing_row[3] or "").strip(),
-                tags=_load_json_text(existing_row[4], default=[]),
-                comments=_load_json_text(existing_row[5], default=[]),
-            )
-            if existing_signature == signature:
-                stats["same_day_unchanged_count"] += 1
-                continue
+        snapshots_for_bvid = existing_snapshots.get(bvid, {})
+        existing_row = snapshots_for_bvid.get(target_date)
+        if existing_row and existing_row["signature"] == signature:
+            stats["same_day_unchanged_count"] += 1
+            continue
 
-        if not existing_row and _has_duplicate_scout_snapshot(
-            conn,
-            bvid=bvid,
-            signature=signature,
-            exclude_date=target_date,
+        if not existing_row and any(
+            snap["signature"] == signature
+            for snap_date, snap in snapshots_for_bvid.items()
+            if snap_date != target_date
         ):
             stats["cross_day_duplicate_count"] += 1
             continue
@@ -928,9 +909,35 @@ def _has_duplicate_scout_snapshot(
     signature: str,
     exclude_date: date,
 ) -> bool:
+    snapshots = _bulk_load_scout_video_snapshots(conn, bvids=[bvid]).get(bvid, {})
+    return any(
+        snap["signature"] == signature
+        for snap_date, snap in snapshots.items()
+        if snap_date != exclude_date
+    )
+
+
+def _bulk_load_scout_video_snapshots(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    bvids: list[str],
+) -> dict[str, dict[date, dict]]:
+    """按 ``bvid`` 批量读取所有历史快照，一次性构建签名映射。
+
+    原先在 ``upsert_scout_raw_videos`` 的循环里对每个 bvid 连发 2 次 SELECT，
+    处理一批 200 条视频就是 400 次点查；这里合并为 1 次 ``WHERE bvid IN (...)``
+    查询，并在内存里按 (bvid, collected_date) 构建索引，签名只在读取时计算一次。
+    """
+
+    unique_bvids = list({b for b in bvids if b})
+    if not unique_bvids:
+        return {}
+
+    placeholders = ",".join(["?"] * len(unique_bvids))
     rows = conn.execute(
-        """
+        f"""
         SELECT
+            bvid,
             collected_date,
             partition,
             title,
@@ -939,24 +946,25 @@ def _has_duplicate_scout_snapshot(
             tags_json,
             comments_json
         FROM scout_raw_videos
-        WHERE bvid = ?
+        WHERE bvid IN ({placeholders})
         """,
-        [bvid],
+        unique_bvids,
     ).fetchall()
+
+    snapshots: dict[str, dict[date, dict]] = {}
     for row in rows:
-        if row[0] == exclude_date:
-            continue
-        existing_signature = _build_scout_video_signature(
-            partition=str(row[1] or "").strip(),
-            title=str(row[2] or "").strip(),
-            description=str(row[3] or "").strip(),
-            video_url=str(row[4] or "").strip(),
-            tags=_load_json_text(row[5], default=[]),
-            comments=_load_json_text(row[6], default=[]),
+        bvid = row[0]
+        collected_date = row[1]
+        signature = _build_scout_video_signature(
+            partition=str(row[2] or "").strip(),
+            title=str(row[3] or "").strip(),
+            description=str(row[4] or "").strip(),
+            video_url=str(row[5] or "").strip(),
+            tags=_load_json_text(row[6], default=[]),
+            comments=_load_json_text(row[7], default=[]),
         )
-        if existing_signature == signature:
-            return True
-    return False
+        snapshots.setdefault(bvid, {})[collected_date] = {"signature": signature}
+    return snapshots
 
 
 def _upsert_scout_raw_comments(
