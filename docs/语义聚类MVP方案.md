@@ -140,12 +140,14 @@ tools/embedding_cluster_mvp/
 
 直接读现有 DuckDB，限定到 scout 已抓取且 miner 已处理的视频范围。
 
+**全量拉取，不加任何过滤条件**（最大化语料覆盖，让 PMI / 聚类在尽可能多的信号上工作）。
+
 ```python
 # pipeline/load_corpus.py 伪代码
 import duckdb
 import pandas as pd
 
-def load_corpus(db_path: str, days: int = 30) -> pd.DataFrame:
+def load_corpus(db_path: str) -> pd.DataFrame:
     conn = duckdb.connect(db_path, read_only=True)
     rows = conn.execute("""
         SELECT
@@ -155,14 +157,16 @@ def load_corpus(db_path: str, days: int = 30) -> pd.DataFrame:
             c.content,
             c.publish_time
         FROM scout_raw_comments c
-        WHERE c.publish_time >= NOW() - INTERVAL ? DAY
-          AND length(c.content) BETWEEN 2 AND 200
-    """, [days]).fetchdf()
+    """).fetchdf()
     conn.close()
     return rows
 ```
 
-> **MVP 数据量**：当前 < 10k 条，全量跑；后期 < 1M，按 `days` 分批跑
+> **MVP 数据量**：当前 < 10k 条，全量跑；后期 < 1M，仍走全量，依赖下一步的长度过滤剔除极端值。
+
+**轻量清洗**（不在 SQL 里做，留在下一步 sentence_split 里统一处理）：
+- 空字符串 / 纯表情 / 长度 > 500 的评论在句法切分阶段自然被过滤（因为切不出合法短句）
+- 重复评论去重放在 embedding 之前（按 `hash(content)` 去重，保留首条）
 
 ---
 
@@ -562,9 +566,11 @@ cat outputs/run-*/eval_report.md
 
 ## 十一、待用户确认的事项
 
-1. embedding 模型最终用 `doubao-embedding-large-text-240515` 还是 `bge-m3`？（需要看你火山控制台开通了哪个）
-2. 数据范围：MVP 跑「最近 30 天」还是「全量」？
-3. gold 200 条人工标注由你来做，**预计什么时候能给到 `data/gold.csv`**？这个不给，MVP 没法评估，做出来也只是肉眼扫
-4. 是否同意「MVP 阶段完全独立、不动生产代码」这个边界？
+| # | 问题 | 状态 |
+|---|---|---|
+| 1 | embedding 模型最终用 `doubao-embedding-large-text-240515` 还是 `bge-m3`？（看你火山控制台开通了哪个） | 待确认 |
+| 2 | 数据范围 | ✅ 已确认：**全量拉取，不限定条件** |
+| 3 | gold 200 条人工标注由你来做，**预计什么时候能给到 `data/gold.csv`**？这个不给，MVP 没法评估 | 待确认 |
+| 4 | 是否同意「MVP 阶段完全独立、不动生产代码」这个边界？ | 待确认 |
 
-回完这 4 项即可开始实现 MVP（**实现属于另一个 PR / 另一个工单**）。本文档只负责说清「我们要做什么、怎么做、为什么这么做」。
+回完剩余 3 项即可开始实现 MVP（**实现属于另一个 PR / 另一个工单**）。本文档只负责说清「我们要做什么、怎么做、为什么这么做」。
