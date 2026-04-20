@@ -4,6 +4,7 @@ Meilisearch 存储层：管理梗库的写入与检索。
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 
@@ -113,6 +114,10 @@ def _build_meili_document(record: MemeRecord) -> dict:
 
 async def upsert_meme(record: MemeRecord) -> None:
     """写入或更新一条梗记录。"""
+    await asyncio.to_thread(_upsert_meme_sync, record)
+
+
+def _upsert_meme_sync(record: MemeRecord) -> None:
     ensure_index()
     client = get_client()
     index = client.index(settings.meili_index_name)
@@ -130,6 +135,23 @@ async def search_memes(
     offset: int = 0,
 ) -> dict:
     """全文检索梗库。"""
+    return await asyncio.to_thread(
+        _search_memes_sync,
+        query,
+        filters,
+        sort,
+        limit,
+        offset,
+    )
+
+
+def _search_memes_sync(
+    query: str,
+    filters: str | None = None,
+    sort: list[str] | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> dict:
     client = get_client()
     index = client.index(settings.meili_index_name)
 
@@ -151,6 +173,10 @@ async def search_memes(
 
 async def get_meme(meme_id: str) -> dict | None:
     """按 ID 获取单条梗记录。"""
+    return await asyncio.to_thread(_get_meme_sync, meme_id)
+
+
+def _get_meme_sync(meme_id: str) -> dict | None:
     client = get_client()
     index = client.index(settings.meili_index_name)
     try:
@@ -174,6 +200,10 @@ async def get_meme(meme_id: str) -> dict | None:
 
 async def update_human_verified(meme_id: str, verified: bool) -> bool:
     """更新人工验证状态。"""
+    return await asyncio.to_thread(_update_human_verified_sync, meme_id, verified)
+
+
+def _update_human_verified_sync(meme_id: str, verified: bool) -> bool:
     client = get_client()
     index = client.index(settings.meili_index_name)
     try:

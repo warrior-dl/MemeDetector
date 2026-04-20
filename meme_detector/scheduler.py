@@ -12,26 +12,34 @@ from __future__ import annotations
 
 import asyncio
 
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from meme_detector.logging_utils import get_logger
 
 logger = get_logger(__name__)
-_scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
+_scheduler: AsyncIOScheduler | None = None
 
 
-def _run_async(coro) -> None:
-    """在新的事件循环中运行异步任务。"""
-    asyncio.run(coro)
+def _build_scheduler() -> AsyncIOScheduler:
+    return AsyncIOScheduler(
+        event_loop=asyncio.get_running_loop(),
+        timezone="Asia/Shanghai",
+    )
 
 
 def start_scheduler() -> None:
     """启动后台调度器。"""
+    global _scheduler
+    if _scheduler is not None and _scheduler.running:
+        return
+
+    _scheduler = _build_scheduler()
 
     # 每日 02:05 运行 Scout
     _scheduler.add_job(
-        func=lambda: _run_async(_scout_job(trigger_mode="scheduled")),
+        func=_scheduled_job,
+        args=["scout"],
         trigger=CronTrigger(hour=2, minute=5, timezone="Asia/Shanghai"),
         id="daily_scout",
         name="每日采集与原始入库",
@@ -41,7 +49,8 @@ def start_scheduler() -> None:
 
     # 每日 03:00 运行 Miner Stage 1
     _scheduler.add_job(
-        func=lambda: _run_async(_miner_insights_job(trigger_mode="scheduled")),
+        func=_scheduled_job,
+        args=["miner_insights"],
         trigger=CronTrigger(hour=3, minute=0, timezone="Asia/Shanghai"),
         id="daily_miner_insights",
         name="每日评论线索初筛",
@@ -51,7 +60,8 @@ def start_scheduler() -> None:
 
     # 每日 03:20 运行 Miner Stage 2
     _scheduler.add_job(
-        func=lambda: _run_async(_miner_bundles_job(trigger_mode="scheduled")),
+        func=_scheduled_job,
+        args=["miner_bundles"],
         trigger=CronTrigger(hour=3, minute=20, timezone="Asia/Shanghai"),
         id="daily_miner_bundles",
         name="每日证据包生成",
@@ -61,7 +71,8 @@ def start_scheduler() -> None:
 
     # 每周一 06:00 运行 Researcher
     _scheduler.add_job(
-        func=lambda: _run_async(_research_job(trigger_mode="scheduled")),
+        func=_scheduled_job,
+        args=["research"],
         trigger=CronTrigger(day_of_week="mon", hour=6, minute=0, timezone="Asia/Shanghai"),
         id="weekly_research",
         name="每周证据包裁决与入库",
@@ -83,8 +94,21 @@ def start_scheduler() -> None:
     logger.info("schedule: 每周一 06:00 → Researcher")
 
 
+def shutdown_scheduler() -> None:
+    """关闭后台调度器。"""
+    global _scheduler
+    if _scheduler is None:
+        return
+    if _scheduler.running:
+        _scheduler.shutdown(wait=False)
+    _scheduler = None
+    logger.info("scheduler stopped", extra={"event": "scheduler_stopped"})
+
+
 def get_scheduler_jobs() -> list[dict]:
     """返回调度任务概览。"""
+    if _scheduler is None:
+        return []
     return [
         {
             "id": job.id,
@@ -96,56 +120,25 @@ def get_scheduler_jobs() -> list[dict]:
     ]
 
 
-async def _scout_job(trigger_mode: str = "scheduled") -> None:
-    from meme_detector.pipeline_service import run_job
-
-    logger.info("scheduled scout started", extra={"event": "scheduled_job_started", "job_name": "scout"})
-    try:
-        await run_job("scout", trigger_mode=trigger_mode)
-    except Exception as e:
-        logger.exception("scheduled scout failed", extra={"event": "scheduled_job_failed", "job_name": "scout"})
-
-
-async def _miner_insights_job(trigger_mode: str = "scheduled") -> None:
-    from meme_detector.pipeline_service import run_job
+async def _scheduled_job(job_name: str, trigger_mode: str = "scheduled") -> None:
+    from meme_detector.pipeline_service import start_background_job
 
     logger.info(
-        "scheduled miner insights started",
-        extra={"event": "scheduled_job_started", "job_name": "miner_insights"},
+        "scheduled job triggered",
+        extra={"event": "scheduled_job_triggered", "job_name": job_name},
     )
     try:
-        await run_job("miner_insights", trigger_mode=trigger_mode)
+        result = await start_background_job(job_name, trigger_mode=trigger_mode)
+        logger.info(
+            "scheduled job dispatched",
+            extra={
+                "event": "scheduled_job_dispatched",
+                "job_name": job_name,
+                "started": result.get("started", False),
+            },
+        )
     except Exception:
         logger.exception(
-            "scheduled miner insights failed",
-            extra={"event": "scheduled_job_failed", "job_name": "miner_insights"},
-        )
-
-
-async def _miner_bundles_job(trigger_mode: str = "scheduled") -> None:
-    from meme_detector.pipeline_service import run_job
-
-    logger.info(
-        "scheduled miner bundles started",
-        extra={"event": "scheduled_job_started", "job_name": "miner_bundles"},
-    )
-    try:
-        await run_job("miner_bundles", trigger_mode=trigger_mode)
-    except Exception:
-        logger.exception(
-            "scheduled miner bundles failed",
-            extra={"event": "scheduled_job_failed", "job_name": "miner_bundles"},
-        )
-
-
-async def _research_job(trigger_mode: str = "scheduled") -> None:
-    from meme_detector.pipeline_service import run_job
-
-    logger.info("scheduled research started", extra={"event": "scheduled_job_started", "job_name": "research"})
-    try:
-        await run_job("research", trigger_mode=trigger_mode)
-    except Exception as e:
-        logger.exception(
-            "scheduled research failed",
-            extra={"event": "scheduled_job_failed", "job_name": "research"},
+            "scheduled job dispatch failed",
+            extra={"event": "scheduled_job_failed", "job_name": job_name},
         )

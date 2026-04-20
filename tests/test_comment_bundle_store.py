@@ -1,13 +1,15 @@
 from datetime import date
 
-from meme_detector.archivist.duckdb_store import (
+from meme_detector.archivist.miner_store import (
     get_comment_bundle,
     get_comment_bundle_detail,
-    get_conn,
-    get_research_decision,
     upsert_comment_bundle,
+)
+from meme_detector.archivist.research_store import (
+    get_research_decision,
     upsert_research_decision,
 )
+from meme_detector.archivist.schema import get_conn
 from meme_detector.pipeline_models import MinerBundle, ResearchDecision
 
 
@@ -157,7 +159,7 @@ def _build_decision() -> ResearchDecision:
 
 def test_comment_bundle_round_trip_and_research_decision(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        "meme_detector.archivist.schema.settings.duckdb_path",
         str(tmp_path / "bundle.db"),
     )
 
@@ -199,7 +201,7 @@ def test_comment_bundle_round_trip_and_research_decision(tmp_path, monkeypatch):
 
 def test_get_comment_bundle_reconstructs_missing_primary_span_link(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        "meme_detector.archivist.schema.settings.duckdb_path",
         str(tmp_path / "bundle-legacy.db"),
     )
 

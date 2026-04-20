@@ -6,7 +6,12 @@
 
 | 文件 | 职责 |
 |------|------|
-| `duckdb_store.py`  | 评论证据包、运行记录、视频上下文缓存、Agent 对话落盘 |
+| `schema.py`       | DuckDB 连接管理、建表、索引、迁移 |
+| `scout_store.py`  | Scout 快照、评论、媒体资产 |
+| `miner_store.py`  | Miner 评论线索、证据包 |
+| `research_store.py` | Research 裁决、梗记录镜像、视频上下文缓存 |
+| `agent_store.py`  | Agent 对话与 trace 审计 |
+| `pipeline_run_store.py` | Pipeline run 审计 |
 | `meili_store.py`   | MemeRecord 写入/更新、全文检索、索引初始化 |
 
 ## 两个后端的职责边界

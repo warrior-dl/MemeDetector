@@ -55,12 +55,6 @@ class ResearchRunResult(BaseModel):
     failed_bundle_ids: list[str] = Field(default_factory=list)
     blocked_pending_video_count: int = 0
 
-    def __getitem__(self, key: str):
-        return getattr(self, key)
-
-    def get(self, key: str, default=None):
-        return getattr(self, key, default)
-
     @classmethod
     def blocked_by_pending_videos(cls, pending_video_count: int) -> "ResearchRunResult":
         return cls(blocked_pending_video_count=pending_video_count)

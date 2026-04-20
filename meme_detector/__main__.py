@@ -52,10 +52,8 @@ def _serve() -> None:
     import uvicorn
 
     from meme_detector.api.app import create_app
-    from meme_detector.scheduler import start_scheduler
 
     app = create_app()
-    start_scheduler()
     logger.info("starting api server", extra={"event": "serve_start"})
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", log_config=None)
 

@@ -4,6 +4,7 @@ AI Agent 工具函数：火山引擎联网搜索、URL 验证。
 
 from __future__ import annotations
 
+import asyncio
 import json
 from copy import deepcopy
 from json import JSONDecodeError
@@ -17,6 +18,7 @@ _VOLCENGINE_TRAFFIC_TAG_VALUE = "meme_detector_researcher"
 _VOLCENGINE_API_KEY_URL = "https://open.feedcoopapi.com/search_api/web_search"
 _VOLCENGINE_RESPONSE_SNIPPET_LIMIT = 300
 _VOLCENGINE_SSE_DONE_MARKER = "[DONE]"
+_VERIFY_URL_CONCURRENCY = 8
 
 
 def _build_web_search_body(query: str, count: int, search_type: str) -> dict:
@@ -274,19 +276,34 @@ async def verify_urls(urls: list[str]) -> list[str]:
     验证 URL 列表的真实性（HTTP HEAD 请求），返回有效的 URL 列表。
     过滤 404/403 等无效链接，防止 AI 幻觉产生的假来源。
     """
-    valid: list[str] = []
+    semaphore = asyncio.Semaphore(min(_VERIFY_URL_CONCURRENCY, max(len(urls), 1)))
     async with httpx.AsyncClient(
         timeout=5,
         follow_redirects=True,
         headers={"User-Agent": "Mozilla/5.0"},
     ) as client:
-        for url in urls:
-            if not url.startswith("http"):
-                continue
-            try:
-                resp = await client.head(url)
-                if resp.status_code < 400:
-                    valid.append(url)
-            except Exception:
-                pass  # 网络错误 / 超时，视为无效
-    return valid
+        results = await asyncio.gather(
+            *[_verify_url(client, semaphore=semaphore, url=url) for url in urls]
+        )
+    return [url for url in results if isinstance(url, str)]
+
+
+async def _verify_url(
+    client: httpx.AsyncClient,
+    *,
+    semaphore: asyncio.Semaphore,
+    url: str,
+) -> str | None:
+    if not url.startswith("http"):
+        return None
+
+    async with semaphore:
+        try:
+            resp = await client.head(url)
+            if resp.status_code in {405, 501}:
+                resp = await client.get(url, headers={"Range": "bytes=0-0"})
+            if resp.status_code < 400:
+                return url
+        except Exception:
+            return None
+    return None

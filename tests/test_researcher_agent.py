@@ -2,13 +2,12 @@ from datetime import date
 
 import pytest
 
-from meme_detector.archivist.duckdb_store import (
+from meme_detector.archivist.miner_store import (
     get_comment_bundle,
-    get_conn,
-    get_pending_scout_raw_videos,
     upsert_comment_bundle,
-    upsert_scout_raw_videos,
 )
+from meme_detector.archivist.schema import get_conn
+from meme_detector.archivist.scout_store import get_pending_scout_raw_videos, upsert_scout_raw_videos
 from meme_detector.pipeline_models import MinerBundle, ResearchDecision
 from meme_detector.researcher.agent import run_research
 
@@ -16,7 +15,7 @@ from meme_detector.researcher.agent import run_research
 @pytest.mark.asyncio
 async def test_run_research_does_not_block_on_pending_miner_video(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        "meme_detector.archivist.schema.settings.duckdb_path",
         str(tmp_path / "research.db"),
     )
 
@@ -55,7 +54,7 @@ async def test_run_research_does_not_block_on_pending_miner_video(tmp_path, monk
 @pytest.mark.asyncio
 async def test_run_research_consumes_queued_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        "meme_detector.archivist.schema.settings.duckdb_path",
         str(tmp_path / "research-bundle.db"),
     )
 
@@ -226,7 +225,7 @@ async def test_run_research_consumes_queued_bundle(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_run_research_consumes_evidenced_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        "meme_detector.archivist.schema.settings.duckdb_path",
         str(tmp_path / "research-evidenced-bundle.db"),
     )
 
@@ -375,7 +374,7 @@ async def test_run_research_consumes_evidenced_bundle(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_run_research_processes_all_queued_bundles(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        "meme_detector.archivist.schema.settings.duckdb_path",
         str(tmp_path / "research-unlimited.db"),
     )
 

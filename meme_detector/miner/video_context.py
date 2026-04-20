@@ -5,16 +5,17 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 from typing import Any
 
 import httpx
 from bilibili_api import Credential, video
 
-from meme_detector.archivist.duckdb_store import (
-    get_conn,
+from meme_detector.archivist.research_store import (
     get_video_context_cache,
     upsert_video_context_cache,
 )
+from meme_detector.archivist.schema import get_conn
 from meme_detector.config import settings
 from meme_detector.logging_utils import get_logger
 
@@ -37,9 +38,8 @@ async def get_bilibili_video_context(bvid: str) -> dict:
     if not normalized_bvid:
         return {"status": "error", "error": "缺少有效的 BVID"}
 
-    conn = get_conn()
-    cached = get_video_context_cache(conn, normalized_bvid)
-    conn.close()
+    with closing(get_conn()) as conn:
+        cached = get_video_context_cache(conn, normalized_bvid)
     if cached:
         logger.info(
             "video context cache hit",
@@ -372,23 +372,22 @@ def _describe_http_error(exc: httpx.HTTPError) -> str:
 
 
 def _save_cache(payload: dict) -> None:
-    conn = get_conn()
-    upsert_video_context_cache(
-        conn,
-        bvid=payload["bvid"],
-        video_url=payload["video_url"],
-        title=payload.get("title", ""),
-        status=payload.get("status", "ready"),
-        duration_seconds=payload.get("duration_seconds"),
-        summary=payload.get("summary", ""),
-        description_text=payload.get("description_text", ""),
-        content_text=payload.get("content_text", ""),
-        transcript_excerpt=payload.get("transcript_excerpt", ""),
-        chapters=payload.get("chapters", []),
-        raw_payload=payload.get("raw_payload", {}),
-        skip_reason=payload.get("skip_reason", ""),
-    )
-    conn.close()
+    with closing(get_conn()) as conn:
+        upsert_video_context_cache(
+            conn,
+            bvid=payload["bvid"],
+            video_url=payload["video_url"],
+            title=payload.get("title", ""),
+            status=payload.get("status", "ready"),
+            duration_seconds=payload.get("duration_seconds"),
+            summary=payload.get("summary", ""),
+            description_text=payload.get("description_text", ""),
+            content_text=payload.get("content_text", ""),
+            transcript_excerpt=payload.get("transcript_excerpt", ""),
+            chapters=payload.get("chapters", []),
+            raw_payload=payload.get("raw_payload", {}),
+            skip_reason=payload.get("skip_reason", ""),
+        )
 
 
 def _public_video_context(payload: dict, *, source: str) -> dict:

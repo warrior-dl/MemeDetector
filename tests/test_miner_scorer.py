@@ -116,3 +116,49 @@ async def test_score_video_comments_parses_llm_json(monkeypatch):
     assert results[0]["confidence"] == 0.8
     assert results[0]["is_meme_candidate"] is True
     assert results[0]["reason"] == "像潜在梗"
+
+
+@pytest.mark.asyncio
+async def test_scorer_passes_dependencies_via_explicit_parameters(monkeypatch):
+    video = {"bvid": "BV1FORWARD"}
+    comments = ["第一条评论"]
+    insights = [{"insight_id": "insight-1"}]
+    recorded: dict[str, object] = {}
+
+    async def fake_score_video_comments(video_arg, comments_arg, **kwargs):
+        recorded["score_video"] = video_arg
+        recorded["score_comments"] = comments_arg
+        recorded["score_kwargs"] = kwargs
+        return [{"ok": True}]
+
+    async def fake_build_bundles_from_insights(video_arg, insights_arg, **kwargs):
+        recorded["bundle_video"] = video_arg
+        recorded["bundle_insights"] = insights_arg
+        recorded["bundle_kwargs"] = kwargs
+        return [{"bundle_id": "bundle-1"}]
+
+    monkeypatch.setattr("meme_detector.miner.scorer.score_video_comments", fake_score_video_comments)
+    monkeypatch.setattr(
+        "meme_detector.miner.scorer.build_bundles_from_insights",
+        fake_build_bundles_from_insights,
+    )
+
+    scored = await scorer._score_video_comments(video, comments)
+    bundled = await scorer._build_bundles(video, insights)
+
+    assert scored == [{"ok": True}]
+    assert bundled == [{"bundle_id": "bundle-1"}]
+    assert recorded["score_video"] is video
+    assert recorded["score_comments"] is comments
+    assert recorded["score_kwargs"] == {
+        "client_cls": scorer.AsyncOpenAI,
+        "video_context_loader": scorer.get_bilibili_video_context,
+        "run_id_getter": scorer.get_current_run_id,
+    }
+    assert recorded["bundle_video"] is video
+    assert recorded["bundle_insights"] is insights
+    assert recorded["bundle_kwargs"] == {
+        "client_cls": scorer.AsyncOpenAI,
+        "web_search_summary_func": scorer.volcengine_web_search_summary,
+        "web_search_func": scorer.volcengine_web_search,
+    }

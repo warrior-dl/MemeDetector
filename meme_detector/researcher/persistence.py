@@ -6,13 +6,10 @@ from __future__ import annotations
 
 from contextlib import closing
 
-from meme_detector.archivist.duckdb_store import (
-    get_comment_bundle,
-    get_conn,
-    list_queued_comment_bundles,
-    get_pending_scout_raw_videos,
-    upsert_research_decision,
-)
+from meme_detector.archivist.research_store import upsert_research_decision
+from meme_detector.archivist.scout_store import get_pending_scout_raw_videos
+from meme_detector.archivist.miner_store import get_comment_bundle, list_queued_comment_bundles
+from meme_detector.archivist.schema import get_conn
 from meme_detector.pipeline_models import MinerBundle, ResearchDecision
 
 

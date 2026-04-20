@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from meme_detector.api.routes import router
 from meme_detector.archivist.meili_store import ensure_index
 from meme_detector.logging_utils import get_logger
+from meme_detector.scheduler import shutdown_scheduler, start_scheduler
 
 logger = get_logger(__name__)
 
@@ -23,8 +24,12 @@ def create_app() -> FastAPI:
         logger.info("api lifespan startup", extra={"event": "api_startup"})
         ensure_index()
         logger.info("meilisearch index ensured", extra={"event": "meili_index_ensured"})
-        yield
-        logger.info("api lifespan shutdown", extra={"event": "api_shutdown"})
+        start_scheduler()
+        try:
+            yield
+        finally:
+            shutdown_scheduler()
+            logger.info("api lifespan shutdown", extra={"event": "api_shutdown"})
 
     app = FastAPI(
         title="MemeDetector API",

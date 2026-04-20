@@ -6,11 +6,10 @@ from __future__ import annotations
 
 from datetime import date
 
-import meme_detector.miner.analysis as _analysis_module
-import meme_detector.miner.bundler as _bundler_module
 from meme_detector.config import settings
 from meme_detector.logging_utils import get_logger
-from meme_detector.miner.analysis import AsyncOpenAI
+from meme_detector.miner.analysis import AsyncOpenAI, score_video_comments
+from meme_detector.miner.bundler import build_bundles_from_insights
 from meme_detector.miner.models import (
     MinerBundlesRunResult,
     MinerInsightsRunResult,
@@ -37,17 +36,23 @@ logger = get_logger(__name__)
 
 
 async def _score_video_comments(video: dict, comments: list[str]) -> list[dict]:
-    _analysis_module.AsyncOpenAI = AsyncOpenAI
-    _analysis_module.get_bilibili_video_context = get_bilibili_video_context
-    _analysis_module.get_current_run_id = get_current_run_id
-    return await _analysis_module.score_video_comments(video, comments)
+    return await score_video_comments(
+        video,
+        comments,
+        client_cls=AsyncOpenAI,
+        video_context_loader=get_bilibili_video_context,
+        run_id_getter=get_current_run_id,
+    )
 
 
 async def _build_bundles(video: dict, insights: list[dict]):
-    _bundler_module.AsyncOpenAI = AsyncOpenAI
-    _bundler_module.volcengine_web_search_summary = volcengine_web_search_summary
-    _bundler_module.volcengine_web_search = volcengine_web_search
-    return await _bundler_module.build_bundles_from_insights(video, insights)
+    return await build_bundles_from_insights(
+        video,
+        insights,
+        client_cls=AsyncOpenAI,
+        web_search_summary_func=volcengine_web_search_summary,
+        web_search_func=volcengine_web_search,
+    )
 
 
 def _count_high_value_insights(insights: list[dict]) -> int:

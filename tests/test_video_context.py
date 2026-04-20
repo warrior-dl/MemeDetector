@@ -1,7 +1,7 @@
 import pytest
 import httpx
 
-from meme_detector.archivist.duckdb_store import get_conn
+from meme_detector.archivist.schema import get_conn
 from meme_detector.miner.video_context import get_bilibili_video_context
 
 
@@ -9,7 +9,7 @@ from meme_detector.miner.video_context import get_bilibili_video_context
 def video_context_db(tmp_path, monkeypatch):
     db_path = str(tmp_path / "video-context.db")
     monkeypatch.setattr(
-        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        "meme_detector.archivist.schema.settings.duckdb_path",
         db_path,
     )
     monkeypatch.setattr(

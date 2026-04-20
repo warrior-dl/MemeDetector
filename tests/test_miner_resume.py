@@ -4,12 +4,14 @@ from datetime import date
 
 import pytest
 
-from meme_detector.archivist.duckdb_store import (
+from meme_detector.archivist.miner_store import (
     get_comment_bundle,
-    get_conn,
+    upsert_miner_comment_insights,
+)
+from meme_detector.archivist.schema import get_conn
+from meme_detector.archivist.scout_store import (
     get_pending_scout_raw_videos,
     mark_scout_raw_videos_mined,
-    upsert_miner_comment_insights,
     upsert_scout_raw_videos,
 )
 from meme_detector.pipeline_models import MinerBundle
@@ -19,7 +21,7 @@ from meme_detector.miner.scorer import run_miner, run_miner_bundles
 @pytest.mark.asyncio
 async def test_run_miner_marks_failed_video_and_continues(tmp_path, monkeypatch):
     db_path = str(tmp_path / "miner-resume.db")
-    monkeypatch.setattr("meme_detector.archivist.duckdb_store.settings.duckdb_path", db_path)
+    monkeypatch.setattr("meme_detector.archivist.schema.settings.duckdb_path", db_path)
 
     target_date = date(2026, 4, 3)
     conn = get_conn()
@@ -117,7 +119,7 @@ async def test_run_miner_marks_failed_video_and_continues(tmp_path, monkeypatch)
 
 def test_upsert_scout_raw_videos_keeps_processed_status_for_same_day_duplicate(tmp_path, monkeypatch):
     db_path = str(tmp_path / "scout-same-day-dedup.db")
-    monkeypatch.setattr("meme_detector.archivist.duckdb_store.settings.duckdb_path", db_path)
+    monkeypatch.setattr("meme_detector.archivist.schema.settings.duckdb_path", db_path)
 
     target_date = date(2026, 4, 3)
     conn = get_conn()
@@ -152,7 +154,7 @@ def test_upsert_scout_raw_videos_keeps_processed_status_for_same_day_duplicate(t
 
 def test_upsert_scout_raw_videos_resets_status_when_same_day_content_changes(tmp_path, monkeypatch):
     db_path = str(tmp_path / "scout-same-day-update.db")
-    monkeypatch.setattr("meme_detector.archivist.duckdb_store.settings.duckdb_path", db_path)
+    monkeypatch.setattr("meme_detector.archivist.schema.settings.duckdb_path", db_path)
 
     target_date = date(2026, 4, 3)
     conn = get_conn()
@@ -206,7 +208,7 @@ def test_upsert_scout_raw_videos_resets_status_when_same_day_content_changes(tmp
 
 def test_upsert_scout_raw_videos_skips_cross_day_duplicate_snapshot(tmp_path, monkeypatch):
     db_path = str(tmp_path / "scout-cross-day-dedup.db")
-    monkeypatch.setattr("meme_detector.archivist.duckdb_store.settings.duckdb_path", db_path)
+    monkeypatch.setattr("meme_detector.archivist.schema.settings.duckdb_path", db_path)
 
     day_one = date(2026, 4, 3)
     day_two = date(2026, 4, 4)
@@ -244,7 +246,7 @@ def test_upsert_scout_raw_videos_skips_cross_day_duplicate_snapshot(tmp_path, mo
 @pytest.mark.asyncio
 async def test_run_miner_bundles_processes_all_pending_insights(tmp_path, monkeypatch):
     db_path = str(tmp_path / "miner-bundles-unlimited.db")
-    monkeypatch.setattr("meme_detector.archivist.duckdb_store.settings.duckdb_path", db_path)
+    monkeypatch.setattr("meme_detector.archivist.schema.settings.duckdb_path", db_path)
 
     target_date = date(2026, 4, 3)
     conn = get_conn()
@@ -397,7 +399,7 @@ async def test_run_miner_bundles_processes_all_pending_insights(tmp_path, monkey
 @pytest.mark.asyncio
 async def test_run_miner_persists_comment_bundle(tmp_path, monkeypatch):
     db_path = str(tmp_path / "miner-bundle.db")
-    monkeypatch.setattr("meme_detector.archivist.duckdb_store.settings.duckdb_path", db_path)
+    monkeypatch.setattr("meme_detector.archivist.schema.settings.duckdb_path", db_path)
 
     target_date = date(2026, 4, 3)
     conn = get_conn()
@@ -528,7 +530,7 @@ async def test_run_miner_persists_comment_bundle(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_run_miner_bundle_failure_does_not_block_insight_persistence(tmp_path, monkeypatch):
     db_path = str(tmp_path / "miner-bundle-failure.db")
-    monkeypatch.setattr("meme_detector.archivist.duckdb_store.settings.duckdb_path", db_path)
+    monkeypatch.setattr("meme_detector.archivist.schema.settings.duckdb_path", db_path)
 
     target_date = date(2026, 4, 3)
     conn = get_conn()

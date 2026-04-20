@@ -5,18 +5,19 @@ AI 分析模块：基于评论证据包对 hypothesis 做最终裁决。
 from __future__ import annotations
 
 import json
+from contextlib import closing
 from datetime import date
 
 from rich.progress import track
 
 import meme_detector.researcher.decider as _decider_module
 from meme_detector.agent_tracing import TraceTimelineBuilder, start_langfuse_trace
-from meme_detector.archivist.duckdb_store import (
+from meme_detector.archivist.agent_store import (
     create_agent_conversation,
     finish_agent_conversation,
-    get_conn,
     replace_agent_trace_events,
 )
+from meme_detector.archivist.schema import get_conn
 from meme_detector.logging_utils import get_logger
 from meme_detector.pipeline_service import update_job_runtime_progress
 from meme_detector.researcher.models import ResearchRunResult
@@ -318,8 +319,7 @@ def create_research_conversation(*, bundle_id: str) -> str | None:
     run_id = get_current_run_id()
     if not run_id:
         return None
-    conn = get_conn()
-    try:
+    with closing(get_conn()) as conn:
         return create_agent_conversation(
             conn,
             run_id=run_id,
@@ -329,8 +329,6 @@ def create_research_conversation(*, bundle_id: str) -> str | None:
             entity_id=bundle_id,
             langfuse_session_id=run_id,
         )
-    finally:
-        conn.close()
 
 
 def persist_research_conversation(
@@ -347,8 +345,7 @@ def persist_research_conversation(
 ) -> None:
     if not conversation_id:
         return
-    conn = get_conn()
-    try:
+    with closing(get_conn()) as conn:
         replace_agent_trace_events(
             conn,
             conversation_id=conversation_id,
@@ -383,5 +380,3 @@ def persist_research_conversation(
             langfuse_public_url=langfuse_public_url,
             error_message=error_message,
         )
-    finally:
-        conn.close()

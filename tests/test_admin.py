@@ -4,27 +4,25 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from meme_detector.archivist.duckdb_store import (
+from meme_detector.archivist.agent_store import (
     create_agent_conversation,
-    create_pipeline_run,
     finish_agent_conversation,
-    finish_pipeline_run,
-    get_conn,
-    upsert_comment_bundle,
-    upsert_miner_comment_insights,
-    upsert_research_decision,
-    upsert_scout_raw_videos,
 )
+from meme_detector.archivist.miner_store import upsert_comment_bundle, upsert_miner_comment_insights
+from meme_detector.archivist.pipeline_run_store import create_pipeline_run, finish_pipeline_run
+from meme_detector.archivist.research_store import upsert_research_decision
+from meme_detector.archivist.schema import get_conn
+from meme_detector.archivist.scout_store import upsert_scout_raw_videos
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "meme_detector.archivist.duckdb_store.settings.duckdb_path",
+        "meme_detector.archivist.schema.settings.duckdb_path",
         str(tmp_path / "admin-test.db"),
     )
     monkeypatch.setattr(
-        "meme_detector.archivist.duckdb_store.settings.media_asset_root",
+        "meme_detector.archivist.scout_store.settings.media_asset_root",
         str(tmp_path / "assets"),
     )
     monkeypatch.setattr("meme_detector.api.app.ensure_index", lambda: None)
@@ -53,7 +51,7 @@ def client(tmp_path, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "meme_detector.archivist.duckdb_store._download_media_asset",
+        "meme_detector.archivist.scout_store._download_media_asset",
         fake_download_media_asset,
     )
 

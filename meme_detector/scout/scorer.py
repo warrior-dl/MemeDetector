@@ -124,7 +124,7 @@ async def run_scout(target_date: date | None = None) -> ScoutRunResult:
         },
     )
 
-    persist_stats = persist_raw_videos(flattened_videos, today)
+    persist_stats = await persist_raw_videos(flattened_videos, today)
     update_job_runtime_progress(
         "scout",
         phase="persisting",

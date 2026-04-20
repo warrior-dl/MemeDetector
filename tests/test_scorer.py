@@ -6,7 +6,8 @@ from datetime import date
 
 import pytest
 
-from meme_detector.archivist.duckdb_store import get_conn, get_pending_scout_raw_videos
+from meme_detector.archivist.schema import get_conn
+from meme_detector.archivist.scout_store import get_pending_scout_raw_videos
 from meme_detector.scout.collector import VideoTexts
 from meme_detector.scout.scorer import _flatten_partition_videos, run_scout
 
@@ -16,7 +17,7 @@ TODAY = date(2026, 3, 24)
 @pytest.mark.asyncio
 async def test_run_scout_persists_raw_video_snapshots(tmp_path, monkeypatch):
     db_path = str(tmp_path / "scout.db")
-    monkeypatch.setattr("meme_detector.archivist.duckdb_store.settings.duckdb_path", db_path)
+    monkeypatch.setattr("meme_detector.archivist.schema.settings.duckdb_path", db_path)
 
     async def fake_collect_all_partitions():
         return {
@@ -58,8 +59,8 @@ async def test_run_scout_persists_raw_video_snapshots(tmp_path, monkeypatch):
 
     summary = await run_scout(target_date=TODAY)
 
-    assert summary["video_count"] == 3
-    assert summary["comment_count"] == 6
+    assert summary.video_count == 3
+    assert summary.comment_count == 6
 
     conn = get_conn()
     raw_videos = get_pending_scout_raw_videos(conn)

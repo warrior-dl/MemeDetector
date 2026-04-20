@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from time import perf_counter
 
@@ -234,7 +235,14 @@ def _is_high_value_insight(item: dict) -> bool:
     )
 
 
-async def build_bundles_from_insights(video: dict, insights: list[dict]) -> list[MinerBundle]:
+async def build_bundles_from_insights(
+    video: dict,
+    insights: list[dict],
+    *,
+    client_cls: type[AsyncOpenAI] = AsyncOpenAI,
+    web_search_summary_func: Callable[[str, int], Coroutine[object, object, dict]] = volcengine_web_search_summary,
+    web_search_func: Callable[[str, int], Coroutine[object, object, list[dict]]] = volcengine_web_search,
+) -> list[MinerBundle]:
     high_value_insights = [item for item in insights if _is_high_value_insight(item)]
     if not high_value_insights:
         return []
@@ -260,18 +268,33 @@ async def build_bundles_from_insights(video: dict, insights: list[dict]) -> list
 
     bundles: list[MinerBundle] = []
     for item in high_value_insights:
-        bundles.append(await build_comment_bundle(video, item))
+        bundles.append(
+            await build_comment_bundle(
+                video,
+                item,
+                client_cls=client_cls,
+                web_search_summary_func=web_search_summary_func,
+                web_search_func=web_search_func,
+            )
+        )
     return bundles
 
 
-async def build_comment_bundle(video: dict, insight_item: dict) -> MinerBundle:
+async def build_comment_bundle(
+    video: dict,
+    insight_item: dict,
+    *,
+    client_cls: type[AsyncOpenAI] = AsyncOpenAI,
+    web_search_summary_func: Callable[[str, int], Coroutine[object, object, dict]] = volcengine_web_search_summary,
+    web_search_func: Callable[[str, int], Coroutine[object, object, list[dict]]] = volcengine_web_search,
+) -> MinerBundle:
     insight_id = str(insight_item.get("insight_id", "")).strip() or "UNKNOWN"
     bvid = str(video.get("bvid", "")).strip() or "UNKNOWN"
     client = build_async_openai_client(
         "miner",
         timeout=settings.miner_llm_timeout_seconds,
         max_retries=settings.miner_llm_max_retries,
-        client_cls=AsyncOpenAI,
+        client_cls=client_cls,
     )
     llm_config = resolve_llm_config("miner")
     started_at = perf_counter()
@@ -288,7 +311,11 @@ async def build_comment_bundle(video: dict, insight_item: dict) -> MinerBundle:
             "planned_query_count": len(plan.search_queries),
         },
     )
-    search_packs = await _collect_search_evidence(plan.search_queries)
+    search_packs = await _collect_search_evidence(
+        plan.search_queries,
+        web_search_summary_func=web_search_summary_func,
+        web_search_func=web_search_func,
+    )
     search_finished_at = perf_counter()
     logger.info(
         "miner bundle search evidence collected",
@@ -369,7 +396,12 @@ async def _plan_comment_bundle(
     return _BundlePlan.model_validate(data)
 
 
-async def _collect_search_evidence(search_queries: list[_SearchQuery]) -> list[_SearchEvidencePack]:
+async def _collect_search_evidence(
+    search_queries: list[_SearchQuery],
+    *,
+    web_search_summary_func: Callable[[str, int], Coroutine[object, object, dict]] = volcengine_web_search_summary,
+    web_search_func: Callable[[str, int], Coroutine[object, object, list[dict]]] = volcengine_web_search,
+) -> list[_SearchEvidencePack]:
     packs: list[_SearchEvidencePack] = []
     seen_queries: set[tuple[str, str]] = set()
 
@@ -382,13 +414,13 @@ async def _collect_search_evidence(search_queries: list[_SearchQuery]) -> list[_
         if dedup_key in seen_queries:
             continue
         seen_queries.add(dedup_key)
-        summary_result = await volcengine_web_search_summary(
+        summary_result = await web_search_summary_func(
             query,
             num_results=_BUNDLE_SEARCH_RESULT_COUNT,
         )
         web_results: list[dict] = []
         if not _is_summary_sufficient(summary_result):
-            web_results = await volcengine_web_search(
+            web_results = await web_search_func(
                 query,
                 num_results=_BUNDLE_SEARCH_RESULT_COUNT,
             )

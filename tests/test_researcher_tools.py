@@ -157,6 +157,38 @@ class _FakeSseAsyncClient(_FakeNonJsonAsyncClient):
         return _FakeSseResponse()
 
 
+class _FakeVerifyResponse:
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+
+
+class _FakeVerifyAsyncClient:
+    def __init__(self, recorder: list[dict], **kwargs):
+        self._recorder = recorder
+        self._kwargs = kwargs
+
+    async def __aenter__(self):
+        self._recorder.append({"client_kwargs": self._kwargs})
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def head(self, url: str):
+        self._recorder.append({"method": "HEAD", "url": url})
+        if url.endswith("/head-ok"):
+            return _FakeVerifyResponse(200)
+        if url.endswith("/needs-get"):
+            return _FakeVerifyResponse(405)
+        return _FakeVerifyResponse(404)
+
+    async def get(self, url: str, *, headers: dict):
+        self._recorder.append({"method": "GET", "url": url, "headers": headers})
+        if url.endswith("/needs-get"):
+            return _FakeVerifyResponse(200)
+        return _FakeVerifyResponse(404)
+
+
 @pytest.mark.asyncio
 async def test_volcengine_web_search_uses_volcengine_api_key(monkeypatch):
     recorder: list[dict] = []
@@ -358,3 +390,34 @@ async def test_volcengine_web_search_returns_error_without_credentials(monkeypat
 
     summary = await tools.volcengine_web_search_summary("依托答辩")
     assert summary == {"error": "WEB_SEARCH_API_KEY 未配置，跳过 Web 搜索"}
+
+
+@pytest.mark.asyncio
+async def test_verify_urls_runs_concurrently_and_falls_back_to_get(monkeypatch):
+    recorder: list[dict] = []
+    monkeypatch.setattr(
+        "meme_detector.researcher.tools.httpx.AsyncClient",
+        lambda **kwargs: _FakeVerifyAsyncClient(recorder, **kwargs),
+    )
+
+    valid = await tools.verify_urls(
+        [
+            "https://example.com/head-ok",
+            "https://example.com/needs-get",
+            "https://example.com/missing",
+            "notaurl",
+        ]
+    )
+
+    assert valid == [
+        "https://example.com/head-ok",
+        "https://example.com/needs-get",
+    ]
+    assert recorder[0]["client_kwargs"]["follow_redirects"] is True
+    assert {"method": "HEAD", "url": "https://example.com/head-ok"} in recorder
+    assert {"method": "HEAD", "url": "https://example.com/needs-get"} in recorder
+    assert {
+        "method": "GET",
+        "url": "https://example.com/needs-get",
+        "headers": {"Range": "bytes=0-0"},
+    } in recorder

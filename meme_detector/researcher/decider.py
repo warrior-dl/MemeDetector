@@ -17,6 +17,7 @@ from meme_detector.config import settings
 from meme_detector.llm_factory import (
     build_async_openai_client,
     load_json_response,
+    request_json_chat_completion as _request_json_chat_completion,
     request_json_chat_completion_detailed,
     resolve_llm_config,
 )
@@ -179,6 +180,19 @@ class _DraftDecision(BaseModel):
     record: dict | None = None
 
 
+async def request_json_chat_completion(
+    *,
+    client: AsyncOpenAI,
+    model_name: str,
+    messages: list[dict[str, str]],
+) -> str:
+    return await _request_json_chat_completion(
+        client=client,
+        model_name=model_name,
+        messages=messages,
+    )
+
+
 def _coerce_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
@@ -256,13 +270,14 @@ async def decide_bundle(
         client_cls=AsyncOpenAI,
     )
     payload = _build_bundle_payload(bundle)
-    llm_response = await request_json_chat_completion_detailed(
+    messages = [
+        {"role": "system", "content": _DECISION_SYSTEM},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+    llm_response = await _request_decision_completion(
         client=client,
         model_name=config.model,
-        messages=[
-            {"role": "system", "content": _DECISION_SYSTEM},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ],
+        messages=messages,
     )
     raw = llm_response["content"]
     if trace is not None:
@@ -320,6 +335,28 @@ async def decide_bundle(
         assessment=ResearchAssessment.model_validate(draft.assessment.model_dump()),
         record=record,
     )
+
+
+async def _request_decision_completion(
+    *,
+    client: AsyncOpenAI,
+    model_name: str,
+    messages: list[dict[str, str]],
+) -> dict[str, Any]:
+    if request_json_chat_completion is _request_json_chat_completion:
+        return await request_json_chat_completion_detailed(
+            client=client,
+            model_name=model_name,
+            messages=messages,
+        )
+    return {
+        "content": await request_json_chat_completion(
+            client=client,
+            model_name=model_name,
+            messages=messages,
+        ),
+        "usage": {},
+    }
 
 
 def _build_bundle_payload(bundle: MinerBundle) -> dict:

@@ -16,12 +16,6 @@ class MinerInsightsRunResult(BaseModel):
     high_value_count: int = 0
     failed_video_count: int = 0
 
-    def __getitem__(self, key: str):
-        return getattr(self, key)
-
-    def get(self, key: str, default=None):
-        return getattr(self, key, default)
-
 
 class MinerBundlesRunResult(BaseModel):
     """Miner Stage 2：证据包生成运行结果。"""
@@ -30,12 +24,6 @@ class MinerBundlesRunResult(BaseModel):
     queued_insight_count: int = 0
     bundled_count: int = 0
     failed_insight_count: int = 0
-
-    def __getitem__(self, key: str):
-        return getattr(self, key)
-
-    def get(self, key: str, default=None):
-        return getattr(self, key, default)
 
 
 class MinerRunResult(BaseModel):

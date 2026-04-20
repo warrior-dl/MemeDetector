@@ -6,19 +6,21 @@ from __future__ import annotations
 
 from contextlib import closing
 
-from meme_detector.archivist.duckdb_store import (
-    get_conn,
+from meme_detector.archivist.miner_store import (
     get_pending_miner_comment_insights,
-    get_pending_scout_raw_videos,
     mark_miner_comment_insights_bundle_failed,
     mark_miner_comment_insights_bundling,
     mark_miner_comment_insights_processed,
+    upsert_comment_bundle,
+    upsert_miner_comment_insights,
+)
+from meme_detector.archivist.schema import get_conn
+from meme_detector.archivist.scout_store import (
+    get_pending_scout_raw_videos,
     mark_scout_raw_videos_miner_failed,
     mark_scout_raw_videos_miner_processing,
     mark_scout_raw_videos_mined,
     recover_stale_miner_processing_videos,
-    upsert_comment_bundle,
-    upsert_miner_comment_insights,
 )
 
 

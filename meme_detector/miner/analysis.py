@@ -6,17 +6,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
+from contextlib import closing
 from datetime import datetime
 
 from openai import AsyncOpenAI
 
 from meme_detector.agent_tracing import TraceTimelineBuilder, start_langfuse_trace
-from meme_detector.archivist.duckdb_store import (
+from meme_detector.archivist.agent_store import (
     create_agent_conversation,
     finish_agent_conversation,
-    get_conn,
     replace_agent_trace_events,
 )
+from meme_detector.archivist.schema import get_conn
 from meme_detector.config import settings
 from meme_detector.llm_factory import (
     build_async_openai_client,
@@ -60,21 +62,28 @@ _MINER_SYSTEM = """\
 """
 
 
-async def score_video_comments(video: dict, comments: list[str]) -> list[dict]:
-    conversation_id = create_miner_conversation(video)
+async def score_video_comments(
+    video: dict,
+    comments: list[str],
+    *,
+    client_cls: type[AsyncOpenAI] = AsyncOpenAI,
+    video_context_loader: Callable[[str], object] = get_bilibili_video_context,
+    run_id_getter: Callable[[], str | None] = get_current_run_id,
+) -> list[dict]:
+    conversation_id = create_miner_conversation(video, run_id_getter=run_id_getter)
     conversation_messages: list[dict] = []
     bvid = str(video.get("bvid", "")).strip()
     llm_config = resolve_llm_config("miner")
     trace = TraceTimelineBuilder(
         conversation_id=conversation_id or "",
-        run_id=get_current_run_id() or "",
+        run_id=run_id_getter() or "",
         agent_name="miner",
         entity_type="video",
         entity_id=bvid,
     )
     with start_langfuse_trace(
         name=f"miner:{bvid or 'unknown-video'}",
-        session_id=get_current_run_id(),
+        session_id=run_id_getter(),
         metadata={
             "agent_name": "miner",
             "conversation_id": conversation_id or "",
@@ -84,7 +93,7 @@ async def score_video_comments(video: dict, comments: list[str]) -> list[dict]:
         },
     ) as langfuse_trace:
         context_started_at = datetime.now()
-        context = await get_bilibili_video_context(bvid)
+        context = await video_context_loader(bvid)
         trace.add_step(
             event_type="input",
             stage="prepare",
@@ -100,7 +109,7 @@ async def score_video_comments(video: dict, comments: list[str]) -> list[dict]:
             "miner",
             timeout=settings.miner_llm_timeout_seconds,
             max_retries=settings.miner_llm_max_retries,
-            client_cls=AsyncOpenAI,
+            client_cls=client_cls,
         )
         chunks = [
             comments[i : i + settings.miner_comments_batch_size]
@@ -388,12 +397,15 @@ def summarize_exception(exc: Exception) -> str:
     return message[:80]
 
 
-def create_miner_conversation(video: dict) -> str | None:
-    run_id = get_current_run_id()
+def create_miner_conversation(
+    video: dict,
+    *,
+    run_id_getter: Callable[[], str | None] = get_current_run_id,
+) -> str | None:
+    run_id = run_id_getter()
     if not run_id:
         return None
-    conn = get_conn()
-    try:
+    with closing(get_conn()) as conn:
         return create_agent_conversation(
             conn,
             run_id=run_id,
@@ -403,8 +415,6 @@ def create_miner_conversation(video: dict) -> str | None:
             entity_id=str(video.get("bvid", "")).strip(),
             langfuse_session_id=run_id,
         )
-    finally:
-        conn.close()
 
 
 def persist_miner_conversation(
@@ -440,8 +450,7 @@ def persist_miner_conversation(
         "high_value_count": high_value_count,
         "results": results,
     }
-    conn = get_conn()
-    try:
+    with closing(get_conn()) as conn:
         replace_agent_trace_events(
             conn,
             conversation_id=conversation_id,
@@ -471,8 +480,6 @@ def persist_miner_conversation(
             langfuse_public_url=langfuse_public_url,
             error_message=error_message,
         )
-    finally:
-        conn.close()
 
 
 def truncate_text(value: str, limit: int) -> str:
