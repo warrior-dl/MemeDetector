@@ -5,8 +5,9 @@ FastAPI 应用入口。
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from meme_detector.api.routes import router
 from meme_detector.archivist.meili_store import ensure_index
@@ -15,6 +16,31 @@ from meme_detector.scheduler import shutdown_scheduler, start_scheduler
 
 logger = get_logger(__name__)
 
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Attach conservative security headers to every response.
+
+    These headers are cheap to add and strictly defensive:
+    ``X-Content-Type-Options`` blocks MIME sniffing, ``Referrer-Policy``
+    limits cross-origin leakage, and ``X-Frame-Options`` prevents
+    click-jacking. A baseline ``Content-Security-Policy`` is also set so
+    the bundled SPA only loads same-origin resources.
+    """
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data: blob: https:; "
+            "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+            "connect-src 'self'; frame-ancestors 'none'",
+        )
+        return response
+
+
 def create_app() -> FastAPI:
     repo_root = Path(__file__).resolve().parents[2]
     frontend_dist = repo_root / "frontend" / "dist"
@@ -22,8 +48,20 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         logger.info("api lifespan startup", extra={"event": "api_startup"})
-        ensure_index()
-        logger.info("meilisearch index ensured", extra={"event": "meili_index_ensured"})
+        try:
+            ensure_index()
+            logger.info(
+                "meilisearch index ensured", extra={"event": "meili_index_ensured"}
+            )
+        except Exception:
+            # Meilisearch may be temporarily unreachable at boot; keep the
+            # API up and let ``upsert_meme`` retry ``ensure_index`` on the
+            # next write rather than failing the whole lifespan.
+            logger.warning(
+                "meilisearch ensure_index skipped; will retry on first write",
+                extra={"event": "meili_index_ensure_failed"},
+                exc_info=True,
+            )
         start_scheduler()
         try:
             yield
@@ -38,6 +76,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.add_middleware(SecurityHeadersMiddleware)
     app.include_router(router, prefix="/api/v1")
 
     if frontend_dist.exists():

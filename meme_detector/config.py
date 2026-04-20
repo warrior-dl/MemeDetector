@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     scout_risk_skip_threshold: int = 2
     scout_request_timeout: float = 15.0
     scout_proxy_url: str = ""
+    # ── 媒体下载防护 ──
+    # 限制评论图片等媒体资产下载：拒绝非 http/https、拒绝解析到内网/环回 IP，
+    # 并限制单次下载体积，避免 SSRF 与 DoS。
+    scout_media_max_bytes: int = 20 * 1024 * 1024
+    scout_media_allow_private_hosts: bool = False
 
     # ── AI 参数 ──
     ai_confidence_threshold: float = 0.65
