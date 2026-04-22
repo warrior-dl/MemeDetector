@@ -1,7 +1,9 @@
-"""火山 doubao embedding 的薄包装。
+"""火山 doubao embedding 的薄包装（走官方 SDK）。
 
-设计文档 Q1 已确认用 ``doubao-embedding-large-text-240515``。通过 OpenAI
-兼容接口调用（base_url ``https://ark.cn-beijing.volces.com/api/v3``）。
+设计文档 Q1 已确认用 ``doubao-embedding-large-text-240515``。底层调用火山
+官方 Ark SDK 的 ``AsyncArk``，等价于官方示例里同步的 ``Ark``。
+
+依赖：``pip install -e '.[mvp]'`` 会带入 ``volcengine-python-sdk``。
 
 使用：
 
@@ -11,7 +13,7 @@
     texts = ["家人们谁懂啊", "绷不住了", "蚌埠住了"]
     vectors = await embed_texts(texts, cache_path=Path("cache/embed.jsonl"))
 
-``vectors`` 是与 ``texts`` 等长的 numpy 数组列表。
+``vectors`` 是与 ``texts`` 等长、已做 L2 归一化的 numpy float32 数组列表。
 """
 
 from __future__ import annotations
@@ -21,11 +23,14 @@ import json
 import os
 from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-from openai import AsyncOpenAI
 
 from meme_detector.logging_utils import get_logger
+
+if TYPE_CHECKING:
+    from volcenginesdkarkruntime import AsyncArk
 
 logger = get_logger(__name__)
 
@@ -34,29 +39,48 @@ _DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 _BATCH_SIZE = 32  # doubao 单次最多 256 条，保守给 32
 
 
-def _build_client(api_key: str, base_url: str) -> AsyncOpenAI:
-    return AsyncOpenAI(api_key=api_key, base_url=base_url)
+def _build_client(api_key: str, base_url: str) -> AsyncArk:
+    try:
+        from volcenginesdkarkruntime import AsyncArk
+    except ImportError as exc:  # pragma: no cover - 交由用户安装
+        raise RuntimeError(
+            "缺少火山 Ark 官方 SDK。请先安装 MVP 依赖："
+            "pip install -e '.[mvp]'（或 pip install volcengine-python-sdk）。"
+        ) from exc
+    return AsyncArk(api_key=api_key, base_url=base_url)
 
 
 def _resolve_env() -> tuple[str, str, str]:
-    api_key = (os.environ.get("EMBEDDING_API_KEY") or os.environ.get("ARK_API_KEY") or "").strip()
+    api_key = (os.environ.get("ARK_API_KEY") or os.environ.get("EMBEDDING_API_KEY") or "").strip()
     base_url = (os.environ.get("EMBEDDING_BASE_URL") or _DEFAULT_BASE_URL).strip()
     model = (os.environ.get("EMBEDDING_MODEL") or _DEFAULT_MODEL).strip()
     if not api_key:
         raise RuntimeError(
-            "缺少 embedding API key。请在 .env 设置 EMBEDDING_API_KEY=<火山 Ark Api Key>（或 ARK_API_KEY）。"
+            "缺少 embedding API key。请在 .env 设置 ARK_API_KEY=<火山 Ark Api Key>（或 EMBEDDING_API_KEY）。"
         )
     return api_key, base_url, model
 
 
 async def _embed_batch(
-    client: AsyncOpenAI,
+    client: AsyncArk,
     model: str,
     batch: list[str],
 ) -> list[np.ndarray]:
-    resp = await client.embeddings.create(model=model, input=batch)
-    # response.data 按 input 顺序返回
-    return [np.asarray(item.embedding, dtype=np.float32) for item in resp.data]
+    # 显式 encoding_format="float"，与火山官方示例一致；省略时可能走 base64。
+    resp = await client.embeddings.create(
+        model=model,
+        input=batch,
+        encoding_format="float",
+    )
+    # response.data 按 input 顺序返回；对向量做 L2 归一化方便后续 cos sim。
+    vectors: list[np.ndarray] = []
+    for item in resp.data:
+        vec = np.asarray(item.embedding, dtype=np.float32)
+        norm = float(np.linalg.norm(vec))
+        if norm > 0.0:
+            vec = vec / norm
+        vectors.append(vec)
+    return vectors
 
 
 def _load_cache(path: Path) -> dict[str, list[float]]:
