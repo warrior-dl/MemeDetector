@@ -35,6 +35,11 @@ class Community:
     # cross_video_ratio = n_videos / total_freq；越低（<<1）= 越集中，
     # 越高（→1）= 跨视频分布越均匀（通用词特征）
     cross_video_ratio: float
+    # 簇内共现辅助信息（Leiden 不消费，供 judge LLM 参考）：
+    # - cooccur_edge_count: 簇内 co_occurs / variant+co_occurs 边条数
+    # - cooccur_event_count: 簇内共现事件总数（即 co_occurs 边权重之和）
+    cooccur_edge_count: int = 0
+    cooccur_event_count: int = 0
     # 裁决相关字段（Layer 4 会填）
     verdict: str | None = None  # "meme" / "not_meme" / "uncertain"
     verdict_reason: str | None = None
@@ -134,7 +139,7 @@ def compute_communities(
             confs.append(s.avg_confidence)
             total_freq += s.freq
 
-        # 密度 & variant sim
+        # 密度 & variant sim & 簇内共现
         sub2 = subgraph.subgraph(nodes)
         weights = [float(d.get("weight", 0.0)) for _, _, d in sub2.edges(data=True)]
         variant_sims = [
@@ -142,6 +147,14 @@ def compute_communities(
         ]
         internal_density = mean(weights) if weights else 0.0
         avg_variant_sim = mean(variant_sims) if variant_sims else 0.0
+
+        cooccur_edge_count = 0
+        cooccur_event_count = 0
+        for _, _, d in sub2.edges(data=True):
+            rel = d.get("rel")
+            if rel in {"co_occurs", "variant+co_occurs"}:
+                cooccur_edge_count += 1
+                cooccur_event_count += int(round(float(d.get("weight", 0.0))))
 
         # burst：该社区所有评论的 ctime
         ctimes = [comment_ctimes.get(cmid) or "" for cmid in comments_union]
@@ -163,6 +176,8 @@ def compute_communities(
                 avg_variant_sim=float(avg_variant_sim),
                 burst_score=float(burst),
                 cross_video_ratio=float(cross_video_ratio),
+                cooccur_edge_count=cooccur_edge_count,
+                cooccur_event_count=cooccur_event_count,
             )
         )
 
@@ -193,6 +208,7 @@ def describe_community(c: Community) -> str:
         f"videos={c.n_videos} authors={c.n_authors} "
         f"density={c.internal_density:.2f} variant_sim={c.avg_variant_sim:.2f} "
         f"burst={c.burst_score:.2f} cv_ratio={c.cross_video_ratio:.2f} "
+        f"co_occurs={c.cooccur_event_count} "
         f"[{terms_preview}]"
     )
 

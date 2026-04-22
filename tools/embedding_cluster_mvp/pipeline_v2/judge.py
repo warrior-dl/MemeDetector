@@ -76,11 +76,19 @@ def _build_user_prompt(community: Community) -> str:
     if len(community.terms) > 30:
         terms_block += f" … (共 {len(community.terms)} 个 term)"
 
+    if community.size >= 2:
+        cooccur_hint = (
+            f"簇内共现事件 {community.cooccur_event_count} 次 / 共现边 {community.cooccur_edge_count} 条"
+        )
+    else:
+        cooccur_hint = "单 term 社区（无共现辅助信号）"
+
     stats = (
         f"出现 {community.total_freq} 次 · 跨 {community.n_videos} 视频 · "
         f"跨 {community.n_authors} 作者 · "
         f"簇内相似度均值 {community.avg_variant_sim:.2f} · "
-        f"跨视频率 {community.cross_video_ratio:.2f}"
+        f"跨视频率 {community.cross_video_ratio:.2f} · "
+        f"{cooccur_hint}"
     )
 
     pos = _format_examples("[已确认是梗]", KNOWN_POSITIVE_EXAMPLES)

@@ -51,6 +51,7 @@ from .graph_builder import (
     aggregate_candidates,
     build_graph,
     candidate_subgraph,
+    variant_only_subgraph,
 )
 from .judge import judge_communities
 from .load_corpus import load_comments
@@ -144,12 +145,19 @@ async def main_async(args: argparse.Namespace) -> int:
     except Exception as exc:  # noqa: BLE001  - gexf 导出只是辅助，不中断主流程
         logger.warning("gexf export failed", extra={"event": "gexf_export_fail", "error": repr(exc)})
 
-    sub = candidate_subgraph(graph)
+    # 统计子图（含 variant + co_occurs 边，用于密度 / 共现辅助统计）
+    stats_sub = candidate_subgraph(graph)
+    # Leiden 子图（只含 variant 边，避免 co_occurs 驱动的虚假合并）
+    leiden_sub = variant_only_subgraph(graph)
+    print(
+        f"     Leiden 输入子图：nodes={leiden_sub.number_of_nodes()} "
+        f"edges={leiden_sub.number_of_edges()} (仅 variant 边)"
+    )
 
     # ── Step 5: Leiden community detection ──────────────────────────────────
-    membership = run_leiden(sub, resolution=args.leiden_resolution, seed=args.seed)
+    membership = run_leiden(leiden_sub, resolution=args.leiden_resolution, seed=args.seed)
     comment_ctimes = {r.comment_id: r.ctime_iso for r in all_results}
-    communities = compute_communities(sub, membership, candidates, comment_ctimes)
+    communities = compute_communities(stats_sub, membership, candidates, comment_ctimes)
     print(f"[5/7] Leiden 社区：{len(communities)} 个")
     for c in communities[: args.print_top]:
         print("     " + describe_community(c))
@@ -286,7 +294,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--judge-concurrency", type=int, default=6)
     p.add_argument("--judge-min-size", type=int, default=1)
 
-    p.add_argument("--variant-threshold", type=float, default=0.82, help="variant 边余弦阈值")
+    p.add_argument(
+        "--variant-threshold",
+        type=float,
+        default=0.75,
+        help="variant 边余弦阈值（0.70 偏松易把 doge↔单身狗 这种同语义类误连；0.82 偏严"
+        "错过 绷不住↔没绷住 这种真变体；0.75 经验折中）",
+    )
     p.add_argument("--min-freq", type=int, default=1, help="candidate 最小提及频次")
     p.add_argument("--leiden-resolution", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=42)

@@ -197,12 +197,39 @@ def build_graph(
 
 
 def candidate_subgraph(graph: nx.Graph) -> nx.Graph:
-    """抽出只含 candidate 节点 + variant/co_occurs 边的子图供 Leiden 使用。"""
+    """抽出 candidate 节点 + variant/co_occurs 边的子图。
+
+    用于社区指标统计（密度、co_occurs 事件数等），**不应**直接喂给 Leiden——
+    因为 co_occurs 边会把"同评论共现但语义无关"的词合并成虚假社区
+    （典型案例：v2_run_002 #0 把"华强买瓜"和"按在地上摩擦/撸网贷"合并）。
+    Leiden 的输入请用 :func:`variant_only_subgraph`。
+    """
     cand_nodes = [n for n, d in graph.nodes(data=True) if d.get("node_type") == "candidate"]
     sub = graph.subgraph(cand_nodes).copy()
-    # 仅保留 candidate-candidate 的加权边
     edges_to_drop = [
         (u, v) for u, v, d in sub.edges(data=True) if d.get("rel") not in {"variant", "co_occurs", "variant+co_occurs"}
     ]
+    sub.remove_edges_from(edges_to_drop)
+    return sub
+
+
+def variant_only_subgraph(graph: nx.Graph) -> nx.Graph:
+    """只含 candidate 节点 + variant 边（剔除纯 co_occurs）的子图，供 Leiden 使用。
+
+    - ``variant``         ✅ 保留，weight = variant_sim
+    - ``variant+co_occurs`` ✅ 保留，weight = variant_sim（共现只作为 judge 辅助信号）
+    - ``co_occurs``       ❌ 剔除（语义无关词因共现被误合并的主因）
+    """
+    cand_nodes = [n for n, d in graph.nodes(data=True) if d.get("node_type") == "candidate"]
+    sub = graph.subgraph(cand_nodes).copy()
+    edges_to_drop: list[tuple[str, str]] = []
+    for u, v, d in sub.edges(data=True):
+        rel = d.get("rel")
+        if rel not in {"variant", "variant+co_occurs"}:
+            edges_to_drop.append((u, v))
+            continue
+        vs = d.get("variant_sim")
+        if vs is not None:
+            d["weight"] = float(vs)
     sub.remove_edges_from(edges_to_drop)
     return sub

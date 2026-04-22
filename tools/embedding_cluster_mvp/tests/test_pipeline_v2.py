@@ -20,6 +20,7 @@ from pipeline_v2.graph_builder import (
     aggregate_candidates,
     build_graph,
     candidate_subgraph,
+    variant_only_subgraph,
 )
 
 # ─────────────────────────── extractor ────────────────────────────
@@ -193,6 +194,69 @@ def test_candidate_subgraph_drops_non_candidate_edges() -> None:
         assert d.get("rel") in {"co_occurs", "variant", "variant+co_occurs"}
 
 
+def test_variant_only_subgraph_drops_pure_cooccur_edges() -> None:
+    """co_occurs 边会把"同评论共现但语义无关"的词误合并成虚假社区——
+    Leiden 子图必须只含 variant 边。"""
+    # a,b 语义无关但同评论共现（仅 co_occurs 边）
+    # c,d 语义高度相似（variant 边，模拟变体）
+    results = [
+        _make_result(
+            "c1",
+            "BV1",
+            "m1",
+            "...",
+            [("a", "meme_candidate", 0.9), ("b", "meme_candidate", 0.9)],
+        ),
+        _make_result("c2", "BV2", "m2", "...", [("c", "meme_candidate", 0.9)]),
+        _make_result("c3", "BV3", "m3", "...", [("d", "meme_candidate", 0.9)]),
+    ]
+    candidates = aggregate_candidates(results)
+    vectors = {
+        "a": np.array([1.0, 0.0, 0.0], dtype=np.float32),
+        "b": np.array([0.0, 1.0, 0.0], dtype=np.float32),  # 与 a 正交
+        "c": np.array([0.0, 0.0, 1.0], dtype=np.float32),
+        "d": np.array([0.0, 0.05, 0.99], dtype=np.float32),  # 与 c 高相似
+    }
+    g = build_graph(results, candidates, vectors, variant_sim_threshold=0.8)
+
+    sub = variant_only_subgraph(g)
+    # 只应保留 c↔d 的 variant 边
+    assert sub.has_edge("cand::c", "cand::d")
+    assert sub["cand::c"]["cand::d"]["rel"] == "variant"
+    # a↔b 的纯 co_occurs 边不该出现
+    assert not sub.has_edge("cand::a", "cand::b")
+    # 所有剩余边都是 variant 或 variant+co_occurs
+    for _, _, d in sub.edges(data=True):
+        assert d.get("rel") in {"variant", "variant+co_occurs"}
+
+
+def test_variant_only_subgraph_keeps_mixed_edges() -> None:
+    """若一条边同时有 variant 相似 + 共现，标记为 variant+co_occurs，
+    应在 Leiden 子图里**保留**（共现只当辅助信号，不单独驱动社区）。"""
+    results = [
+        _make_result(
+            "c1",
+            "BV1",
+            "m1",
+            "...",
+            [("x", "meme_candidate", 0.9), ("y", "meme_candidate", 0.9)],
+        ),
+    ]
+    candidates = aggregate_candidates(results)
+    vectors = {
+        "x": np.array([1.0, 0.0, 0.0], dtype=np.float32),
+        "y": np.array([0.99, 0.1, 0.0], dtype=np.float32),  # 高度相似
+    }
+    g = build_graph(results, candidates, vectors, variant_sim_threshold=0.5)
+    # 原图里的这条边同时是 variant + co_occurs
+    assert g["cand::x"]["cand::y"]["rel"] == "variant+co_occurs"
+
+    sub = variant_only_subgraph(g)
+    assert sub.has_edge("cand::x", "cand::y")
+    # weight 被回写为 variant_sim（使 Leiden 权重语义一致）
+    assert sub["cand::x"]["cand::y"]["weight"] > 0.9
+
+
 # ─────────────────────────── community ────────────────────────────
 
 
@@ -260,7 +324,7 @@ def test_compute_communities_aggregates_metrics() -> None:
     }
     g = build_graph(results, candidates, vectors, variant_sim_threshold=0.5)
     sub = candidate_subgraph(g)
-    membership = run_leiden(sub, seed=42)
+    membership = run_leiden(variant_only_subgraph(g), seed=42)
     comm_list = compute_communities(sub, membership, candidates, {})
 
     assert len(comm_list) >= 1
@@ -271,6 +335,56 @@ def test_compute_communities_aggregates_metrics() -> None:
     assert big.n_authors == 2
     assert big.n_comments == 2
     assert 0.0 <= big.avg_variant_sim <= 1.0
+    # 两 term 同评论共现 1 次，应反映在 cooccur_event_count 上
+    assert big.cooccur_edge_count >= 1
+    assert big.cooccur_event_count >= 1
+
+
+def test_leiden_ignores_cooccur_edges() -> None:
+    """v2 关键回归：两个语义无关的 term 即便同评论共现，Leiden 也不应把它们合并。
+
+    场景：{华强买瓜} + {按在地上摩擦} 在同一条评论里共现（co_occurs 边 clique），
+    但 embedding 完全正交。Leiden 输入用 variant_only_subgraph 后，
+    不同 term 应落入不同社区。
+    """
+    _leiden_or_skip()
+
+    # 同一条评论里 4 个语义无关的 term 共现，形成完整 4-clique 的 co_occurs 边
+    results = [
+        _make_result(
+            "c1",
+            "BV1",
+            "m1",
+            "...",
+            [
+                ("华强买瓜", "meme_candidate", 0.9),
+                ("按在地上摩擦", "meme_candidate", 0.9),
+                ("撸网贷", "meme_candidate", 0.9),
+                ("吃瓜", "meme_candidate", 0.9),
+            ],
+        ),
+    ]
+    candidates = aggregate_candidates(results)
+    # 四个完全正交的向量 → 没有 variant 边
+    vectors = {
+        "华强买瓜": np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+        "按在地上摩擦": np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float32),
+        "撸网贷": np.array([0.0, 0.0, 1.0, 0.0], dtype=np.float32),
+        "吃瓜": np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+    }
+    g = build_graph(results, candidates, vectors, variant_sim_threshold=0.5)
+
+    # 旧行为：直接在含 co_occurs 的子图跑 Leiden → 4 个 term 被合并成一大社区
+    bad_sub = candidate_subgraph(g)
+    bad_membership = run_leiden(bad_sub, seed=42)
+    bad_groups = len(set(bad_membership.values()))
+    assert bad_groups == 1, "控制样本：co_occurs 驱动下 Leiden 合并为单社区（v2_run_002 的 bug）"
+
+    # 新行为：只喂 variant 边 → 没有 variant 边，每个 term 应落单
+    good_sub = variant_only_subgraph(g)
+    good_membership = run_leiden(good_sub, seed=42)
+    good_groups = len(set(good_membership.values()))
+    assert good_groups == 4, "修复后：纯共现不再驱动合并，4 个无关 term 应分成 4 个社区"
 
 
 # ─────────────────────────── evaluation ────────────────────────────
