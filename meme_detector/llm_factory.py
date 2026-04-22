@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -23,6 +24,15 @@ _JSON_PROMPT_ONLY_REMINDER = (
     "请只返回单个合法 JSON 对象或 JSON 数组，不要输出 Markdown 代码块、解释、前后缀文本或其他非 JSON 内容。"
 )
 _STRUCTURED_OUTPUT_SUPPORT_CACHE: dict[str, bool] = {}
+_STRUCTURED_OUTPUT_PROBE_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _structured_output_probe_lock(model_name: str) -> asyncio.Lock:
+    lock = _STRUCTURED_OUTPUT_PROBE_LOCKS.get(model_name)
+    if lock is None:
+        lock = asyncio.Lock()
+        _STRUCTURED_OUTPUT_PROBE_LOCKS[model_name] = lock
+    return lock
 
 
 @dataclass(frozen=True)
@@ -146,22 +156,54 @@ def _get_setting(name: str) -> str:
     return ""
 
 
-async def request_json_chat_completion(
+async def _chat_completion_with_structured_output_fallback(
     *,
     client: AsyncOpenAI,
     model_name: str,
     messages: list[dict[str, str]],
-) -> str:
-    use_structured_output = _STRUCTURED_OUTPUT_SUPPORT_CACHE.get(model_name, True)
-    if use_structured_output:
+) -> Any:
+    """调用 chat.completions.create，必要时从 json_object 降级为 prompt-only。
+
+    通过每模型一把 ``asyncio.Lock`` 序列化首次探测：并发调用进入时，只有
+    拿到锁的协程对 ``response_format={"type": "json_object"}`` 发起真实请
+    求；其余协程等待锁释放后读取 ``_STRUCTURED_OUTPUT_SUPPORT_CACHE`` 的
+    结论，避免 N 条评论同时撞 400。
+    """
+
+    cached = _STRUCTURED_OUTPUT_SUPPORT_CACHE.get(model_name)
+    if cached is None:
+        async with _structured_output_probe_lock(model_name):
+            cached = _STRUCTURED_OUTPUT_SUPPORT_CACHE.get(model_name)
+            if cached is None:
+                try:
+                    resp = await client.chat.completions.create(
+                        model=model_name,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                    )
+                    _STRUCTURED_OUTPUT_SUPPORT_CACHE[model_name] = True
+                    return resp
+                except BadRequestError as exc:
+                    if not should_fallback_from_response_format(exc):
+                        raise
+                    _STRUCTURED_OUTPUT_SUPPORT_CACHE[model_name] = False
+                    logger.warning(
+                        "llm structured output unsupported, fallback to prompt-only json",
+                        extra={
+                            "event": "llm_structured_output_fallback",
+                            "model_name": model_name,
+                        },
+                    )
+                    cached = False
+
+    if cached:
         try:
             resp = await client.chat.completions.create(
                 model=model_name,
                 messages=messages,
                 response_format={"type": "json_object"},
             )
-            _STRUCTURED_OUTPUT_SUPPORT_CACHE[model_name] = True
-            return resp.choices[0].message.content or "{}"
+            return resp
         except BadRequestError as exc:
             if not should_fallback_from_response_format(exc):
                 raise
@@ -174,9 +216,22 @@ async def request_json_chat_completion(
                 },
             )
 
-    resp = await client.chat.completions.create(
+    return await client.chat.completions.create(
         model=model_name,
         messages=build_prompt_only_json_messages(messages),
+    )
+
+
+async def request_json_chat_completion(
+    *,
+    client: AsyncOpenAI,
+    model_name: str,
+    messages: list[dict[str, str]],
+) -> str:
+    resp = await _chat_completion_with_structured_output_fallback(
+        client=client,
+        model_name=model_name,
+        messages=messages,
     )
     return resp.choices[0].message.content or "{}"
 
@@ -255,29 +310,11 @@ async def request_json_chat_completion_detailed(
     model_name: str,
     messages: list[dict[str, str]],
 ) -> dict[str, Any]:
-    use_structured_output = _STRUCTURED_OUTPUT_SUPPORT_CACHE.get(model_name, True)
-    if use_structured_output:
-        try:
-            resp = await client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                response_format={"type": "json_object"},
-            )
-            _STRUCTURED_OUTPUT_SUPPORT_CACHE[model_name] = True
-        except BadRequestError as exc:
-            if not should_fallback_from_response_format(exc):
-                raise
-            _STRUCTURED_OUTPUT_SUPPORT_CACHE[model_name] = False
-            resp = await client.chat.completions.create(
-                model=model_name,
-                messages=build_prompt_only_json_messages(messages),
-            )
-    else:
-        resp = await client.chat.completions.create(
-            model=model_name,
-            messages=build_prompt_only_json_messages(messages),
-        )
-
+    resp = await _chat_completion_with_structured_output_fallback(
+        client=client,
+        model_name=model_name,
+        messages=messages,
+    )
     content = resp.choices[0].message.content or "{}"
     usage = getattr(resp, "usage", None)
     usage_payload = {

@@ -1,9 +1,13 @@
+import asyncio
+
 import httpx
 import pytest
 from openai import BadRequestError
 
 from meme_detector.config import settings
 from meme_detector.llm_factory import (
+    _STRUCTURED_OUTPUT_PROBE_LOCKS,
+    _STRUCTURED_OUTPUT_SUPPORT_CACHE,
     load_json_response,
     request_json_chat_completion,
     resolve_llm_config,
@@ -78,6 +82,15 @@ def test_load_json_response_supports_markdown_and_prefix_text():
     assert data["results"][0]["index"] == 0
 
 
+@pytest.fixture(autouse=True)
+def _clear_structured_output_cache():
+    _STRUCTURED_OUTPUT_SUPPORT_CACHE.clear()
+    _STRUCTURED_OUTPUT_PROBE_LOCKS.clear()
+    yield
+    _STRUCTURED_OUTPUT_SUPPORT_CACHE.clear()
+    _STRUCTURED_OUTPUT_PROBE_LOCKS.clear()
+
+
 @pytest.mark.asyncio
 async def test_request_json_chat_completion_falls_back_when_response_format_unsupported():
     calls: list[dict] = []
@@ -126,3 +139,70 @@ async def test_request_json_chat_completion_falls_back_when_response_format_unsu
     assert calls[0]["response_format"] == {"type": "json_object"}
     assert "response_format" not in calls[1]
     assert "请只返回单个合法 JSON 对象或 JSON 数组" in calls[1]["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_request_json_chat_completion_concurrent_probes_once():
+    """并发进入时，只有一条协程应真正尝试 json_object；其余读到缓存后直接降级。"""
+
+    calls: list[dict] = []
+    probe_started = asyncio.Event()
+    probe_can_finish = asyncio.Event()
+
+    class FakeResponse:
+        def __init__(self, content: str):
+            self.choices = [type("Choice", (), {"message": type("Message", (), {"content": content})()})()]
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            calls.append(kwargs)
+            if kwargs.get("response_format") == {"type": "json_object"}:
+                probe_started.set()
+                await probe_can_finish.wait()
+                raise BadRequestError(
+                    message="json_object not supported",
+                    response=httpx.Response(
+                        400,
+                        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+                    ),
+                    body={
+                        "error": {
+                            "param": "response_format.type",
+                            "message": "json_object is not supported by this model",
+                        }
+                    },
+                )
+            return FakeResponse('{"ok": true}')
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    client = FakeClient()
+
+    async def _call():
+        return await request_json_chat_completion(
+            client=client,
+            model_name="volcengine-custom-model",
+            messages=[
+                {"role": "system", "content": "系统提示"},
+                {"role": "user", "content": "用户提示"},
+            ],
+        )
+
+    task_probe = asyncio.create_task(_call())
+    await probe_started.wait()
+    other_tasks = [asyncio.create_task(_call()) for _ in range(4)]
+    await asyncio.sleep(0)
+    probe_can_finish.set()
+    results = await asyncio.gather(task_probe, *other_tasks)
+
+    assert all(r == '{"ok": true}' for r in results)
+    structured_attempts = [c for c in calls if c.get("response_format") == {"type": "json_object"}]
+    assert len(structured_attempts) == 1, "只有首个协程应尝试 json_object"
+    fallback_attempts = [c for c in calls if "response_format" not in c]
+    assert len(fallback_attempts) == 5
