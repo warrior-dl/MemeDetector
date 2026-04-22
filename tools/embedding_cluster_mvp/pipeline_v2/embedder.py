@@ -54,9 +54,22 @@ async def _embed_batch(
     model: str,
     batch: list[str],
 ) -> list[np.ndarray]:
-    resp = await client.embeddings.create(model=model, input=batch)
-    # response.data 按 input 顺序返回
-    return [np.asarray(item.embedding, dtype=np.float32) for item in resp.data]
+    # 火山 Ark doubao-embedding-* 必须显式 encoding_format="float"，
+    # 否则会走 base64 路径导致 OpenAI SDK 解析失败。
+    resp = await client.embeddings.create(
+        model=model,
+        input=batch,
+        encoding_format="float",
+    )
+    # response.data 按 input 顺序返回；对向量做 L2 归一化方便后续 cos sim。
+    vectors: list[np.ndarray] = []
+    for item in resp.data:
+        vec = np.asarray(item.embedding, dtype=np.float32)
+        norm = float(np.linalg.norm(vec))
+        if norm > 0.0:
+            vec = vec / norm
+        vectors.append(vec)
+    return vectors
 
 
 def _load_cache(path: Path) -> dict[str, list[float]]:
