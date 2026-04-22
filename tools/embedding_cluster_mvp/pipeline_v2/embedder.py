@@ -1,9 +1,13 @@
-"""火山 doubao embedding 的薄包装（走官方 SDK）。
+"""阿里云百炼（DashScope）text-embedding 的薄包装。
 
-设计文档 Q1 已确认用 ``doubao-embedding-large-text-240515``。底层调用火山
-官方 Ark SDK 的 ``AsyncArk``，等价于官方示例里同步的 ``Ark``。
+默认使用 ``text-embedding-v4``，通过 DashScope 的 OpenAI 兼容端点调用
+``https://dashscope.aliyuncs.com/compatible-mode/v1``，和用户贴的官方示例
+完全对齐。可通过环境变量覆盖：
 
-依赖：``pip install -e '.[mvp]'`` 会带入 ``volcengine-python-sdk``。
+- ``DASHSCOPE_API_KEY``：阿里云百炼 API Key（兜底读 ``EMBEDDING_API_KEY``）
+- ``EMBEDDING_MODEL``：默认 ``text-embedding-v4``
+- ``EMBEDDING_BASE_URL``：默认北京 region，新加坡改
+  ``https://dashscope-intl.aliyuncs.com/compatible-mode/v1``
 
 使用：
 
@@ -23,55 +27,42 @@ import json
 import os
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
+from openai import AsyncOpenAI
 
 from meme_detector.logging_utils import get_logger
 
-if TYPE_CHECKING:
-    from volcenginesdkarkruntime import AsyncArk
-
 logger = get_logger(__name__)
 
-_DEFAULT_MODEL = "doubao-embedding-large-text-240515"
-_DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
-_BATCH_SIZE = 32  # doubao 单次最多 256 条，保守给 32
+_DEFAULT_MODEL = "text-embedding-v4"
+_DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+# DashScope text-embedding 单次最多 10 条（v1/v2/v3/v4 限制不同，保守给 10）
+_BATCH_SIZE = 10
 
 
-def _build_client(api_key: str, base_url: str) -> AsyncArk:
-    try:
-        from volcenginesdkarkruntime import AsyncArk
-    except ImportError as exc:  # pragma: no cover - 交由用户安装
-        raise RuntimeError(
-            "缺少火山 Ark 官方 SDK。请先安装 MVP 依赖："
-            "pip install -e '.[mvp]'（或 pip install volcengine-python-sdk）。"
-        ) from exc
-    return AsyncArk(api_key=api_key, base_url=base_url)
+def _build_client(api_key: str, base_url: str) -> AsyncOpenAI:
+    return AsyncOpenAI(api_key=api_key, base_url=base_url)
 
 
 def _resolve_env() -> tuple[str, str, str]:
-    api_key = (os.environ.get("ARK_API_KEY") or os.environ.get("EMBEDDING_API_KEY") or "").strip()
+    api_key = (os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("EMBEDDING_API_KEY") or "").strip()
     base_url = (os.environ.get("EMBEDDING_BASE_URL") or _DEFAULT_BASE_URL).strip()
     model = (os.environ.get("EMBEDDING_MODEL") or _DEFAULT_MODEL).strip()
     if not api_key:
         raise RuntimeError(
-            "缺少 embedding API key。请在 .env 设置 ARK_API_KEY=<火山 Ark Api Key>（或 EMBEDDING_API_KEY）。"
+            "缺少 embedding API key。请在 .env 设置 DASHSCOPE_API_KEY=<阿里云百炼 API Key>"
+            "（或 EMBEDDING_API_KEY）。"
         )
     return api_key, base_url, model
 
 
 async def _embed_batch(
-    client: AsyncArk,
+    client: AsyncOpenAI,
     model: str,
     batch: list[str],
 ) -> list[np.ndarray]:
-    # 显式 encoding_format="float"，与火山官方示例一致；省略时可能走 base64。
-    resp = await client.embeddings.create(
-        model=model,
-        input=batch,
-        encoding_format="float",
-    )
+    resp = await client.embeddings.create(model=model, input=batch)
     # response.data 按 input 顺序返回；对向量做 L2 归一化方便后续 cos sim。
     vectors: list[np.ndarray] = []
     for item in resp.data:

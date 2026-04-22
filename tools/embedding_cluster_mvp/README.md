@@ -114,7 +114,7 @@ pip install -e '.[mvp]'   # networkx, python-igraph, leidenalg, numpy
 
 - `MINER_LLM_API_KEY` / `MINER_LLM_MODEL`（或回退 `LLM_*`）供 extractor 用
 - `RESEARCH_LLM_API_KEY` / `RESEARCH_LLM_MODEL` 供 judge 用（可以同一家）
-- `EMBEDDING_API_KEY`（或 `ARK_API_KEY`）+ `EMBEDDING_MODEL=doubao-embedding-large-text-240515`
+- `DASHSCOPE_API_KEY`（阿里云百炼，兜底读 `EMBEDDING_API_KEY`）；默认 `EMBEDDING_MODEL=text-embedding-v4`，新加坡 region 需把 `EMBEDDING_BASE_URL` 改为 `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`
 
 ### 一键运行
 
