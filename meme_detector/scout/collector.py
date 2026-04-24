@@ -10,6 +10,7 @@ import random
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import date
 
 from bilibili_api import Credential, comment, rank, request_settings, video
 from bilibili_api.comment import CommentResourceType, OrderType
@@ -142,6 +143,110 @@ def _compute_comment_retry_delay(attempt_index: int, exc: Exception) -> float:
     if _is_risk_control_error(exc):
         return max(settings.scout_risk_cooldown_seconds, base_delay) + jitter
     return base_delay + jitter
+
+
+async def collect_danmaku(
+    bvid: str,
+    *,
+    credential: Credential | None = None,
+    date_filter: date | None = None,
+    from_seg: int | None = None,
+    to_seg: int | None = None,
+) -> list[dict]:
+    """抓取单个视频的全部弹幕（实时池 + 历史池）。
+
+    默认使用登录态（``_build_credential()`` 读 ``BILIBILI_SESSDATA`` 等 env），
+    未配置时回落到匿名访问——B 站对匿名弹幕请求更敏感，线上默认应登录。
+
+    ``date_filter`` 为 None 时抓"当前可见的全部分段"；指定日期时走历史弹幕接口。
+    ``from_seg`` / ``to_seg`` 只在 ``date_filter is None`` 时生效，用来限定 6 分钟段。
+
+    返回的每条 dict 结构见 ``archivist/scout_store.upsert_scout_raw_danmaku`` 注释。
+    本函数**不写库**，由调用方决定是否落 DuckDB。
+    """
+    cred = credential if credential is not None else _build_credential()
+    v = video.Video(bvid=bvid, credential=cred)
+
+    logger.info(
+        "scout danmaku fetch started",
+        extra={
+            "event": "scout_danmaku_fetch_started",
+            "bvid": bvid,
+            "authenticated": cred is not None,
+            "date_filter": date_filter.isoformat() if date_filter else None,
+        },
+    )
+
+    try:
+        raw_list = await v.get_danmakus(
+            date=date_filter,
+            from_seg=from_seg,
+            to_seg=to_seg,
+        )
+    except Exception as e:  # noqa: BLE001 (外层是 IO 边界)
+        logger.warning(
+            "scout danmaku fetch failed",
+            extra={"event": "scout_danmaku_fetch_failed", "bvid": bvid},
+            exc_info=e,
+        )
+        return []
+
+    from meme_detector.archivist.text_norm import content_hash as _content_hash
+
+    collected: list[dict] = []
+    seen_dmids: set[str] = set()
+    for dm in raw_list or []:
+        text = str(getattr(dm, "text", "") or "").strip()
+        if not text:
+            continue
+
+        dmid_raw = getattr(dm, "id_str", "") or str(getattr(dm, "id_", "") or "")
+        dmid = str(dmid_raw).strip()
+        if dmid == "-1" or dmid == "":
+            dmid = ""  # 留给 upsert 兜底生成
+
+        # 去重：同一 Danmaku 实例 id_str 不可能重复，但 B 站偶尔把同一弹幕在
+        # 历史池 + 实时池 都返回一次，这里按 dmid 简单去重，兜底生成的 synthetic
+        # dmid 交给 upsert 层面处理（PK 冲突会走 ON CONFLICT）。
+        if dmid and dmid in seen_dmids:
+            continue
+        if dmid:
+            seen_dmids.add(dmid)
+
+        send_ts_raw = getattr(dm, "send_time", None)
+        collected.append(
+            {
+                "dmid": dmid,
+                "content": text,
+                "content_hash": _content_hash(text),
+                "dm_time_seconds": float(getattr(dm, "dm_time", 0.0) or 0.0),
+                "send_timestamp": float(send_ts_raw) if isinstance(send_ts_raw, int | float) else None,
+                "mode": int(getattr(dm, "mode", 1) or 1),
+                "color": str(getattr(dm, "color", "ffffff") or "ffffff"),
+                "font_size": int(getattr(dm, "font_size", 25) or 25),
+                "pool": int(getattr(dm, "pool", 0) or 0),
+                "weight": int(getattr(dm, "weight", -1) if getattr(dm, "weight", -1) is not None else -1),
+                "crc32_uid": str(getattr(dm, "crc32_id", "") or ""),
+                "raw_payload": {
+                    "id_str": str(getattr(dm, "id_str", "") or ""),
+                    "uid": int(getattr(dm, "uid", -1) or -1),
+                    "is_sub": bool(getattr(dm, "is_sub", False)),
+                    "attr": int(getattr(dm, "attr", -1) or -1),
+                },
+            }
+        )
+
+    logger.info(
+        "scout danmaku fetch completed",
+        extra={
+            "event": "scout_danmaku_fetch_completed",
+            "bvid": bvid,
+            "raw_count": len(raw_list or []),
+            "collected_count": len(collected),
+            "unique_texts": len({c["content_hash"] for c in collected}),
+        },
+    )
+    return collected
 
 
 async def _fetch_video_comments(
