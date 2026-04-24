@@ -115,6 +115,48 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
 );
 """
 
+# ---- V3 M1-b 产出表：BurstEvent 弹幕共鸣爆点 -------------------------------
+# 一条 burst_event = 单个 bvid 下 ±window_sec 秒内出现的 ≥ min_count 条相似弹幕聚类。
+# event_id 由 (bvid, center_ts, signature_hash) 生成，幂等；重跑同算法覆盖 member 关系。
+_CREATE_BURST_EVENT = """
+CREATE TABLE IF NOT EXISTS burst_event (
+    event_id            TEXT      PRIMARY KEY,
+    bvid                TEXT      NOT NULL,
+    center_ts           DOUBLE    NOT NULL,
+    window_sec          DOUBLE    NOT NULL,
+    signature           TEXT      NOT NULL,
+    signature_hash      TEXT      NOT NULL,
+    danmaku_count       INTEGER   NOT NULL,
+    unique_users        INTEGER   NOT NULL,
+    detector            TEXT      DEFAULT 'hash_exact_v1',
+    detected_at         TIMESTAMP DEFAULT NOW()
+);
+"""
+
+_CREATE_BURST_EVENT_BVID_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_burst_event_bvid_ts
+    ON burst_event (bvid, center_ts);
+"""
+
+_CREATE_BURST_EVENT_HASH_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_burst_event_signature_hash
+    ON burst_event (signature_hash);
+"""
+
+_CREATE_BURST_EVENT_MEMBER = """
+CREATE TABLE IF NOT EXISTS burst_event_member (
+    event_id            TEXT      NOT NULL,
+    bvid                TEXT      NOT NULL,
+    dmid                TEXT      NOT NULL,
+    PRIMARY KEY (event_id, dmid)
+);
+"""
+
+_CREATE_BURST_EVENT_MEMBER_DMID_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_burst_event_member_bvid_dmid
+    ON burst_event_member (bvid, dmid);
+"""
+
 _CREATE_MEDIA_ASSETS = """
 CREATE TABLE IF NOT EXISTS media_assets (
     asset_id            TEXT      PRIMARY KEY,
@@ -504,6 +546,11 @@ def _ensure_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(_CREATE_SCOUT_RAW_DANMAKU_BVID_INDEX)
     conn.execute(_CREATE_SCOUT_RAW_DANMAKU_HASH_INDEX)
     conn.execute(_CREATE_EMBEDDING_CACHE)
+    conn.execute(_CREATE_BURST_EVENT)
+    conn.execute(_CREATE_BURST_EVENT_BVID_INDEX)
+    conn.execute(_CREATE_BURST_EVENT_HASH_INDEX)
+    conn.execute(_CREATE_BURST_EVENT_MEMBER)
+    conn.execute(_CREATE_BURST_EVENT_MEMBER_DMID_INDEX)
     conn.execute(_CREATE_MEDIA_ASSETS)
     conn.execute(_CREATE_COMMENT_MEDIA_LINKS)
     _run_schema_action(
