@@ -1,17 +1,29 @@
-"""M1-a 端到端实测 CLI。
+"""M1-a / M1-b 端到端实测 CLI。
 
-跑一条命令把 V3 M1-a 的三块能力一次性打通：
+跑一条命令把 V3 M1-a + M1-b 的能力一次性打通：
 1. ``scout.collector.collect_danmaku`` 真抓 B 站弹幕（默认登录态）
 2. ``archivist.scout_store.upsert_scout_raw_danmaku`` 写 DuckDB
 3. ``archivist.embedding_cache.get_or_compute`` 去重缓存，统计命中率
+4. ``candidate_discovery.burst_detector.detect_burst_events`` 跑共鸣爆点检测
+   （+ ``archivist.burst_store.upsert_burst_events`` 落库），M1-b 默认开启；
+   可用 ``--no-burst`` 关闭。
 
 用法::
 
-    # 基本：抓弹幕 + 落库 + 打印复读 Top20 + stub embedding 命中率
+    # 完整：抓弹幕 + 落库 + stub embedding + burst 检测（M1-a + M1-b）
     uv run python -m tools.m1a_smoke BV1xx...
 
-    # 跳过 embedding 环节（只验弹幕采集/落库）
+    # 跳过 embedding 环节（只验弹幕采集/落库 + burst 检测）
     uv run python -m tools.m1a_smoke BV1xx... --no-embed
+
+    # 只抓不落库（纯采集自测；burst 检测会自动降级为"基于内存数据")
+    uv run python -m tools.m1a_smoke BV1xx... --no-write-db
+
+    # 关闭 burst 检测
+    uv run python -m tools.m1a_smoke BV1xx... --no-burst
+
+    # 调整 burst 阈值
+    uv run python -m tools.m1a_smoke BV1xx... --burst-window 3.0 --burst-min-count 5
 
     # 用火山 Ark 官方 embedding（需 ARK_API_KEY）
     uv run python -m tools.m1a_smoke BV1xx... --real-embed
@@ -33,7 +45,8 @@ from collections import Counter
 from datetime import date
 from pathlib import Path
 
-from meme_detector.archivist import embedding_cache, schema, scout_store
+from meme_detector.archivist import burst_store, embedding_cache, schema, scout_store
+from meme_detector.candidate_discovery import detect_burst_events
 from meme_detector.logging_utils import get_logger
 from meme_detector.scout.collector import collect_danmaku
 
@@ -128,6 +141,8 @@ async def _run(args: argparse.Namespace) -> int:
     # 3. embedding_cache 命中率
     if args.no_embed:
         print("[embed] 跳过 (--no-embed)")
+        if not args.no_burst:
+            _run_burst_detection(args, danmakus)
         return 0
 
     if args.real_embed:
@@ -174,13 +189,66 @@ async def _run(args: argparse.Namespace) -> int:
         f" api_batches={api_call_counter['batches']}"
     )
     if miss == 0:
-        print("[embed] ✅ 全命中——说明上一次 run 已经把这些 hash 缓存住了")
+        print("[embed] 全命中——说明上一次 run 已经把这些 hash 缓存住了")
     elif miss == unique:
-        print("[embed] ⚠️ 第一次 run 对所有 unique 文本都 miss 属正常；再跑一次应该全命中")
+        print("[embed] 第一次 run 对所有 unique 文本都 miss 属正常；再跑一次应该全命中")
     else:
-        print(f"[embed] ℹ️ 部分命中：本次 unique={unique}，其中 miss={miss}（其余历史已缓存）")
+        print(f"[embed] 部分命中：本次 unique={unique}，其中 miss={miss}（其余历史已缓存）")
+
+    # 4. M1-b burst detector（默认启用；可 --no-burst 跳过）
+    if not args.no_burst:
+        _run_burst_detection(args, danmakus)
 
     return 0
+
+
+def _run_burst_detection(args: argparse.Namespace, danmakus: list[dict]) -> None:
+    """M1-b：对本轮拉到的弹幕跑一次 burst detector，打印 Top-K，并落库。
+
+    默认用本轮从 B 站拉下来的弹幕做检测；传 ``--burst-from-db`` 时改为从
+    ``scout_raw_danmaku`` 读取该 bvid 的累计数据——这对"匿名只能拿到部分
+    分段弹幕"场景很重要：跑多次慢慢把 DB 填满，再按全量检测才能看到
+    真正的共鸣爆点。
+    """
+    if args.burst_from_db:
+        conn = schema.get_conn()
+        try:
+            danmakus = scout_store.list_scout_raw_danmaku(conn, bvid=args.bvid)
+        finally:
+            conn.close()
+        print(f"[burst] source=db bvid={args.bvid} 读到 {len(danmakus)} 条累计弹幕")
+    else:
+        print(f"[burst] source=fresh 本轮拉到 {len(danmakus)} 条弹幕")
+
+    events = detect_burst_events(
+        danmakus,
+        window_sec=args.burst_window,
+        min_count=args.burst_min_count,
+        min_unique_users=args.burst_min_unique_users,
+    )
+    print(
+        f"[burst] 检测完成：events={len(events)}"
+        f" window_sec={args.burst_window} min_count={args.burst_min_count}"
+        f" min_unique_users={args.burst_min_unique_users}"
+    )
+
+    if events:
+        ranked = sorted(events, key=lambda e: e.danmaku_count, reverse=True)
+        show_k = min(args.burst_top_k, len(ranked))
+        print(f"[burst] top-{show_k} 按 danmaku_count 倒序：")
+        for ev in ranked[:show_k]:
+            sig_short = ev.signature[:40] + ("…" if len(ev.signature) > 40 else "")
+            print(f"  [{ev.center_ts:>7.1f}s]  ×{ev.danmaku_count:<3}  uniq_users={ev.unique_users:<3}  {sig_short}")
+    else:
+        print("[burst] 本视频没有达到阈值的共鸣爆点——要么弹幕分布太散、要么阈值太高，可以 --burst-min-count 调小再跑")
+
+    if args.write_db and events:
+        conn = schema.get_conn()
+        try:
+            stats = burst_store.upsert_burst_events(conn, events=events)
+        finally:
+            conn.close()
+        print(f"[burst] upsert 完成：{stats}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -212,6 +280,44 @@ def main(argv: list[str] | None = None) -> int:
         "--real-embed",
         action="store_true",
         help="用火山 Ark embedding（需 ARK_API_KEY）；默认走 stub 不产生 API 成本",
+    )
+    # M1-b burst detector
+    parser.add_argument(
+        "--no-burst",
+        action="store_true",
+        help="跳过 M1-b burst detector（只跑 M1-a 部分）",
+    )
+    parser.add_argument(
+        "--burst-window",
+        type=float,
+        default=3.0,
+        help="burst 同 hash 相邻间隔上限（秒），默认 3.0（对齐 V3 Q2）",
+    )
+    parser.add_argument(
+        "--burst-min-count",
+        type=int,
+        default=5,
+        help="单 burst 最小弹幕数，默认 5",
+    )
+    parser.add_argument(
+        "--burst-min-unique-users",
+        type=int,
+        default=3,
+        help="单 burst 最小 unique 用户数（防一人刷屏），默认 3",
+    )
+    parser.add_argument(
+        "--burst-top-k",
+        type=int,
+        default=10,
+        help="打印 Top-K 个 burst（按 danmaku_count 倒序）",
+    )
+    parser.add_argument(
+        "--burst-from-db",
+        action="store_true",
+        help=(
+            "burst 检测从 DB 读该 bvid 的累计弹幕（而非本轮刚抓的快照）。"
+            "匿名抓取只能拿到部分分段时，跑多次后用这个 flag 做全量检测。"
+        ),
     )
     args = parser.parse_args(argv)
 
