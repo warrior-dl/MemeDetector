@@ -94,15 +94,13 @@ async def _run(args: argparse.Namespace) -> int:
     dup_ratio = 1.0 - unique / total if total else 0.0
     print(f"[scout] raw_count={total} unique_text={unique} dup_ratio={dup_ratio:.1%}")
 
-    # Top-K 复读
-    top = hashes.most_common(args.top_k)
+    # Top-K 复读：先把所有 hash → sample content 扫出来，再按频次取 Top-K
     preview_by_hash: dict[str, str] = {}
     for dm in danmakus:
         h = dm["content_hash"]
         if h not in preview_by_hash:
             preview_by_hash[h] = dm["content"]
-        if len(preview_by_hash) >= args.top_k:
-            break
+    top = hashes.most_common(args.top_k)
     print(f"[scout] top-{args.top_k} 复读：")
     for h, cnt in top:
         text = preview_by_hash.get(h, "")
