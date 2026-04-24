@@ -1387,3 +1387,155 @@ def _load_json_text(value: str | None, default):
         return json.loads(value)
     except json.JSONDecodeError:
         return default
+
+
+def upsert_scout_raw_danmaku(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    bvid: str,
+    danmakus: list[dict],
+) -> dict:
+    """批量写入视频弹幕快照。
+
+    幂等：PK = (bvid, dmid)。同一 dmid 再抓到会原地覆盖（弹幕内容可变情况极少，
+    覆盖比起冲突失败更符合"抓到什么存什么"的预期）。
+
+    ``danmakus`` 每条期望结构由 ``scout/collector.collect_danmaku`` 决定：
+        {
+            "dmid": str,              # 弹幕服务器 id_str；若缺则用 hash 兜底
+            "content": str,
+            "content_hash": str,      # 上游已算好；以防不同模块使用不同归一化
+            "dm_time_seconds": float, # 视频内时间点
+            "send_timestamp": datetime | None,
+            "mode": int,
+            "color": str,
+            "font_size": int,
+            "pool": int,
+            "weight": int,
+            "crc32_uid": str,
+            "raw_payload": dict,      # 完整 Danmaku 序列化，留 audit
+        }
+    """
+
+    from meme_detector.archivist.text_norm import content_hash as _content_hash
+
+    stats = {
+        "input_count": len(danmakus),
+        "prepared_count": 0,
+        "invalid_count": 0,
+    }
+    if not danmakus:
+        return stats
+
+    now = datetime.now()
+    rows: list[tuple] = []
+    for dm in danmakus:
+        if not isinstance(dm, dict):
+            stats["invalid_count"] += 1
+            continue
+        dmid = str(dm.get("dmid") or "").strip()
+        content = str(dm.get("content") or "").strip()
+        if not content:
+            stats["invalid_count"] += 1
+            continue
+        if not dmid:
+            # 兜底：dm_time + content_hash 足以在同一 bvid 下唯一
+            dmid = f"synth:{dm.get('dm_time_seconds', 0.0):.3f}:{_content_hash(content)[:16]}"
+
+        ch = str(dm.get("content_hash") or "").strip() or _content_hash(content)
+
+        send_ts = dm.get("send_timestamp")
+        if isinstance(send_ts, int | float):
+            send_ts = datetime.fromtimestamp(send_ts)
+        elif send_ts is not None and not isinstance(send_ts, datetime):
+            send_ts = None
+
+        rows.append(
+            (
+                bvid,
+                dmid,
+                content,
+                ch,
+                float(dm.get("dm_time_seconds") or 0.0),
+                send_ts,
+                int(dm.get("mode") or 1),
+                str(dm.get("color") or "ffffff"),
+                int(dm.get("font_size") or 25),
+                int(dm.get("pool") or 0),
+                int(dm.get("weight") if dm.get("weight") is not None else -1),
+                str(dm.get("crc32_uid") or ""),
+                now,
+                json.dumps(dm.get("raw_payload") or {}, ensure_ascii=False),
+            )
+        )
+        stats["prepared_count"] += 1
+
+    if not rows:
+        return stats
+
+    conn.executemany(
+        """
+        INSERT INTO scout_raw_danmaku (
+            bvid, dmid, content, content_hash,
+            dm_time_seconds, send_timestamp,
+            mode, color, font_size, pool, weight, crc32_uid,
+            fetched_at, raw_payload_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (bvid, dmid) DO UPDATE
+        SET content = excluded.content,
+            content_hash = excluded.content_hash,
+            dm_time_seconds = excluded.dm_time_seconds,
+            send_timestamp = excluded.send_timestamp,
+            mode = excluded.mode,
+            color = excluded.color,
+            font_size = excluded.font_size,
+            pool = excluded.pool,
+            weight = excluded.weight,
+            crc32_uid = excluded.crc32_uid,
+            fetched_at = excluded.fetched_at,
+            raw_payload_json = excluded.raw_payload_json
+        """,
+        rows,
+    )
+    return stats
+
+
+def list_scout_raw_danmaku(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    bvid: str,
+) -> list[dict]:
+    """读取某视频的全部弹幕快照，按视频内时间升序。"""
+    rows = conn.execute(
+        """
+        SELECT
+            bvid, dmid, content, content_hash,
+            dm_time_seconds, send_timestamp,
+            mode, color, font_size, pool, weight, crc32_uid,
+            fetched_at, raw_payload_json
+        FROM scout_raw_danmaku
+        WHERE bvid = ?
+        ORDER BY dm_time_seconds ASC, dmid ASC
+        """,
+        [bvid],
+    ).fetchall()
+    return [
+        {
+            "bvid": row[0],
+            "dmid": row[1],
+            "content": row[2],
+            "content_hash": row[3],
+            "dm_time_seconds": row[4],
+            "send_timestamp": row[5],
+            "mode": row[6],
+            "color": row[7],
+            "font_size": row[8],
+            "pool": row[9],
+            "weight": row[10],
+            "crc32_uid": row[11],
+            "fetched_at": row[12],
+            "raw_payload": _load_json_text(row[13], default={}),
+        }
+        for row in rows
+    ]

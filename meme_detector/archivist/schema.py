@@ -73,6 +73,48 @@ CREATE TABLE IF NOT EXISTS scout_raw_comments (
 );
 """
 
+_CREATE_SCOUT_RAW_DANMAKU = """
+CREATE TABLE IF NOT EXISTS scout_raw_danmaku (
+    bvid                TEXT      NOT NULL,
+    dmid                TEXT      NOT NULL,
+    content             TEXT      NOT NULL,
+    content_hash        TEXT      NOT NULL,
+    dm_time_seconds     DOUBLE    NOT NULL,
+    send_timestamp      TIMESTAMP,
+    mode                INTEGER   DEFAULT 1,
+    color               TEXT      DEFAULT 'ffffff',
+    font_size           INTEGER   DEFAULT 25,
+    pool                INTEGER   DEFAULT 0,
+    weight              INTEGER   DEFAULT -1,
+    crc32_uid           TEXT      DEFAULT '',
+    fetched_at          TIMESTAMP DEFAULT NOW(),
+    raw_payload_json    TEXT      DEFAULT '{}',
+    PRIMARY KEY (bvid, dmid)
+);
+"""
+
+_CREATE_SCOUT_RAW_DANMAKU_BVID_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_scout_raw_danmaku_bvid_time
+    ON scout_raw_danmaku (bvid, dm_time_seconds);
+"""
+
+_CREATE_SCOUT_RAW_DANMAKU_HASH_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_scout_raw_danmaku_content_hash
+    ON scout_raw_danmaku (content_hash);
+"""
+
+_CREATE_EMBEDDING_CACHE = """
+CREATE TABLE IF NOT EXISTS embedding_cache (
+    content_hash        TEXT      NOT NULL,
+    model               TEXT      NOT NULL,
+    dim                 INTEGER   NOT NULL,
+    vector_json         TEXT      NOT NULL,
+    text_preview        TEXT      DEFAULT '',
+    created_at          TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (content_hash, model)
+);
+"""
+
 _CREATE_MEDIA_ASSETS = """
 CREATE TABLE IF NOT EXISTS media_assets (
     asset_id            TEXT      PRIMARY KEY,
@@ -458,6 +500,10 @@ def _schema_marker_exists(conn: duckdb.DuckDBPyConnection) -> bool:
 def _ensure_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(_CREATE_SCOUT_RAW_VIDEOS)
     conn.execute(_CREATE_SCOUT_RAW_COMMENTS)
+    conn.execute(_CREATE_SCOUT_RAW_DANMAKU)
+    conn.execute(_CREATE_SCOUT_RAW_DANMAKU_BVID_INDEX)
+    conn.execute(_CREATE_SCOUT_RAW_DANMAKU_HASH_INDEX)
+    conn.execute(_CREATE_EMBEDDING_CACHE)
     conn.execute(_CREATE_MEDIA_ASSETS)
     conn.execute(_CREATE_COMMENT_MEDIA_LINKS)
     _run_schema_action(
